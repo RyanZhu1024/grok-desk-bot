@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Desk Assistant
+Comment=Push-to-talk desk assistant
+Exec=__INSTALL_DIR__/deploy/run.sh
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true

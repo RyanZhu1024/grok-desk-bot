@@ -1,0 +1,20 @@
+[Unit]
+Description=Desk Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=__HOME__
+Environment=DESK_CONFIG=/etc/desk-assistant/config.yaml
+Environment=DESK_STATE_DIR=/var/lib/desk-assistant
+ExecStart=__INSTALL_DIR__/deploy/run.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
