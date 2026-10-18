@@ -1,0 +1,85 @@
+# Desk Assistant configuration.
+# Copy to config.yaml (laptop) or /etc/desk-assistant/config.yaml (Pi).
+# config.yaml is gitignored. Paste the webhook URL and bearer key below,
+# or set DESK_WEBHOOK_URL and DESK_WEBHOOK_KEY (those override this file).
+
+webhook:
+  # Where the Pi POSTs {"text", "source", "reply_topic"}.
+  url: ""
+  # Sent as: Authorization: Bearer <key>
+  key: ""
+  timeout_seconds: 20
+
+ntfy:
+  server: "https://ntfy.sh"
+  # Leave empty to generate a long random topic on first run and save it
+  # in the state directory. The device sends this topic on every request.
+  # Anyone who knows the topic can read replies and push messages to the
+  # screen, so treat it like a password. Override with DESK_NTFY_TOPIC.
+  topic: ""
+
+# How long to stay on "thinking" before giving up on a reply.
+reply_timeout_seconds: 180
+
+# Notifications that arrive while the desk is idle are shown, not spoken.
+speak_notifications: false
+
+# auto: GPIO when /dev/gpiochip0 exists, otherwise the keyboard.
+input_backend: auto
+
+# Push-to-talk. BCM numbering. The other leg of the button goes to GND.
+# Physical pin 11 is BCM 17. Internal pull-up, so a press reads low.
+ptt:
+  gpio: 17
+  key: space
+
+# Preset buttons. Delete the inbox entry if you only have two presets.
+# Keys are the laptop stand-ins used by --test and input_backend: keyboard.
+buttons:
+  - id: briefing
+    label: Briefing
+    gpio: 27          # physical pin 13
+    key: "1"
+    text: "Give me my morning briefing."
+  - id: calendar
+    label: Calendar
+    gpio: 22          # physical pin 15
+    key: "2"
+    text: "What's next on my calendar?"
+  - id: inbox
+    label: Inbox
+    gpio: 23          # physical pin 16, optional third preset
+    key: "3"
+    text: "Any urgent messages I should know about?"
+
+stt:
+  # auto picks vosk, then whisper.cpp, when the model files exist.
+  engine: auto
+  vosk_model: "/var/lib/desk-assistant/models/vosk-model-small-en-us-0.15"
+  whisper_bin: "whisper-cli"
+  whisper_model: "/var/lib/desk-assistant/models/ggml-tiny.en.bin"
+  mock_transcript: "Give me a short status update."
+
+tts:
+  # auto uses Piper when the model exists, otherwise espeak-ng.
+  engine: auto
+  piper_bin: "piper"
+  piper_model: "/var/lib/desk-assistant/models/en_US-lessac-medium.onnx"
+  espeak_bin: "espeak-ng"
+  espeak_voice: "en-us"
+  espeak_speed: 155
+  player: auto
+
+audio:
+  sample_rate: 16000
+  max_record_seconds: 30
+  min_record_seconds: 0.25
+  # arecord device, for example "plughw:1,0". Empty uses the default mic.
+  device: ""
+
+ui:
+  width: 800
+  height: 480
+  fullscreen: true
+  # auto lets SDL pick. Use kmsdrm only when no desktop is running.
+  driver: auto
