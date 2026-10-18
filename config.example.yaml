@@ -33,8 +33,10 @@ ptt:
   gpio: 17
   key: space
 
-# Preset buttons. Delete the inbox entry if you only have two presets.
-# Keys are the laptop stand-ins used by --test and input_backend: keyboard.
+# Four arcade buttons: push-to-talk above, plus these three presets.
+# Inbox on BCM 23 is enabled by default. Keys are the laptop stand-ins
+# used by --test and input_backend: keyboard. The LEDs are wired to 5 V
+# and are not listed here; nothing in this file drives them.
 buttons:
   - id: briefing
     label: Briefing
@@ -48,7 +50,7 @@ buttons:
     text: "What's next on my calendar?"
   - id: inbox
     label: Inbox
-    gpio: 23          # physical pin 16, optional third preset
+    gpio: 23          # physical pin 16, fourth button
     key: "3"
     text: "Any urgent messages I should know about?"
 
@@ -74,12 +76,19 @@ audio:
   sample_rate: 16000
   max_record_seconds: 30
   min_record_seconds: 0.25
-  # arecord device, for example "plughw:1,0". Empty uses the default mic.
+  # Pick the capture and playback device whose name contains this text.
+  # The Anker PowerConf S330 shows up as "PowerConf". If nothing matches,
+  # or the match is empty, the system default device is used.
+  input_match: "PowerConf"
+  output_match: "PowerConf"
+  # Optional exact arecord device, for example "plughw:CARD=PowerConf,DEV=0".
+  # When set, this wins over input_match. Leave empty to use the match.
   device: ""
 
 ui:
-  width: 800
-  height: 480
+  # Touch Display 2, rotated to landscape. The layout also fits 800x480.
+  width: 1280
+  height: 720
   fullscreen: true
   # auto lets SDL pick. Use kmsdrm only when no desktop is running.
   driver: auto

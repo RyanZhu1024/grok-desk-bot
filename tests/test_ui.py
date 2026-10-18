@@ -48,6 +48,25 @@ def _snap(**overrides) -> Snapshot:
     return Snapshot(**data)
 
 
+@pytest.mark.parametrize("size", [(1280, 720), (800, 480)])
+def test_layout_fits_the_surface(size):
+    display = DeskDisplay()
+    surface = pygame.Surface(size)
+    display.render(surface, _snap(notification="The printer downstairs is free."))
+    assert display._hits
+    previous = None
+    for rect, _ident in display._hits:
+        assert rect.width > 20
+        assert rect.height > 20
+        assert rect.left >= 0 and rect.top >= 0
+        assert rect.right <= size[0] and rect.bottom <= size[1]
+        assert rect.top > size[1] * 0.5
+        if previous is not None:
+            assert not rect.colliderect(previous)
+            assert rect.left > previous.left
+        previous = rect
+
+
 def test_touch_targets_match_the_drawn_buttons():
     display = DeskDisplay()
     surface = pygame.Surface((800, 480))

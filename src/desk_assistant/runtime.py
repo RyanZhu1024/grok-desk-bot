@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from desk_assistant.app import Assistant
-from desk_assistant.audio import MockTTS, build_recorder, build_stt, build_tts
+from desk_assistant.audio import MockTTS, build_recorder, build_stt, build_tts, resolve_input_device, resolve_output_device
 from desk_assistant.config import Config, load_config, redact_key
 from desk_assistant.gpio_input import GpioInput
 from desk_assistant.mock_server import MockAssistantServer
@@ -78,6 +78,13 @@ def format_check(config: Config) -> str:
     stt, stt_name = build_stt(config)
     _tts, tts_name = build_tts(config)
     backend = resolve_input_backend(config, test_mode=False)
+    player = config.tts.player
+    if player == "auto":
+        from desk_assistant.audio import detect_player
+
+        player = detect_player() or "paplay"
+    capture = resolve_input_device(config)
+    playback = resolve_output_device(config, player)
     lines = [
         f"Config file: {config.config_path or '(defaults, no config.yaml found)'}",
         f"Webhook URL: {config.webhook.url or 'missing'}",
@@ -86,6 +93,9 @@ def format_check(config: Config) -> str:
         f"Topic file: {config.state_dir / 'topic'}",
         f"Speech-to-text: {stt_name}",
         f"Text-to-speech: {tts_name}",
+        capture.report(),
+        playback.report(),
+        f"Screen: {config.ui.width}x{config.ui.height}  fullscreen={'yes' if config.ui.fullscreen else 'no'}",
         f"Input: {backend}",
         f"Push-to-talk: BCM {config.ptt.gpio}  key {config.ptt.key}",
         f"Reply timeout: {config.reply_timeout_seconds:g}s",
