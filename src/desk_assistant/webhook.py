@@ -45,7 +45,7 @@ class WebhookClient:
         if self._owns_client:
             self._client.close()
 
-    def send(self, text: str, source: str, reply_topic: str) -> WebhookResult:
+    def send(self, text: str, source: str, reply_topic: str, target: str | None = None) -> WebhookResult:
         if source not in VALID_SOURCES:
             raise ValueError(f"source must be one of {sorted(VALID_SOURCES)}, got {source!r}")
         cleaned = " ".join((text or "").split())
@@ -78,6 +78,8 @@ class WebhookClient:
             )
 
         payload = {"text": cleaned, "source": source, "reply_topic": reply_topic.strip()}
+        if target and str(target).strip():
+            payload["target"] = str(target).strip().lower()
         headers = {
             "Authorization": f"Bearer {self.key}",
             "Accept": "application/json",

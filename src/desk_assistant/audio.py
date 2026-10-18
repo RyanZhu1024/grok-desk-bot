@@ -221,8 +221,9 @@ class UnavailableTTS:
 class _SubprocessTTS:
     """Synthesize a wav, then play it with a process we can terminate."""
 
-    def __init__(self, player: str) -> None:
+    def __init__(self, player: str, output_device: str = "") -> None:
         self.player = player
+        self.output_device = output_device
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -231,7 +232,7 @@ class _SubprocessTTS:
         os.close(handle)
         try:
             self.synthesize(text, name)
-            command = player_argv(self.player, name)
+            command = player_argv(self.player, name, self.output_device)
             with self._lock:
                 self._proc = subprocess.Popen(
                     command,
@@ -259,8 +260,8 @@ class _SubprocessTTS:
 
 
 class EspeakTTS(_SubprocessTTS):
-    def __init__(self, binary: str, voice: str, speed: int, player: str) -> None:
-        super().__init__(player)
+    def __init__(self, binary: str, voice: str, speed: int, player: str, output_device: str = "") -> None:
+        super().__init__(player, output_device)
         if shutil.which(binary) is None:
             raise RuntimeError(f"{binary} is not installed.")
         self.binary = binary
@@ -276,8 +277,8 @@ class EspeakTTS(_SubprocessTTS):
 
 
 class PiperTTS(_SubprocessTTS):
-    def __init__(self, binary: str, model: str, player: str) -> None:
-        super().__init__(player)
+    def __init__(self, binary: str, model: str, player: str, output_device: str = "") -> None:
+        super().__init__(player, output_device)
         if shutil.which(binary) is None and not Path(binary).is_file():
             raise RuntimeError(f"Piper binary not found: {binary}")
         if not model or not Path(model).is_file():
@@ -317,15 +318,23 @@ def detect_player() -> str | None:
     return None
 
 
-def player_argv(player: str, wav: str) -> list[str]:
+def player_argv(player: str, wav: str, device: str = "") -> list[str]:
     if player == "ffplay":
         return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", wav]
     if player == "afplay":
         return ["afplay", wav]
     if player == "paplay":
-        return ["paplay", wav]
+        command = ["paplay"]
+        if device:
+            command.extend(["--device", device])
+        command.append(wav)
+        return command
     if player == "aplay":
-        return ["aplay", "-q", wav]
+        command = ["aplay", "-q"]
+        if device:
+            command.extend(["-D", device])
+        command.append(wav)
+        return command
     return [player, wav]
 
 
@@ -384,6 +393,8 @@ def build_tts(config: Config, *, prefer_mock: bool = False) -> tuple[TextToSpeec
                 return MockTTS(), "mock text-to-speech"
             return UnavailableTTS(reason), f"unavailable ({reason})"
         player = detected
+    output_device = config.audio.output_device.strip()
+    device_note = f", {output_device}" if output_device else ""
     try:
         engine = config.tts.engine
         piper_ready = bool(config.tts.piper_model) and Path(config.tts.piper_model).is_file() and (
@@ -391,16 +402,16 @@ def build_tts(config: Config, *, prefer_mock: bool = False) -> tuple[TextToSpeec
         )
         if engine == "piper" or (engine == "auto" and piper_ready):
             return (
-                PiperTTS(config.tts.piper_bin, config.tts.piper_model, player),
-                f"piper ({player})",
+                PiperTTS(config.tts.piper_bin, config.tts.piper_model, player, output_device),
+                f"piper ({player}{device_note})",
             )
         espeak_bin = config.tts.espeak_bin
         if shutil.which(espeak_bin) is None and shutil.which("espeak"):
             espeak_bin = "espeak"
         if engine in {"espeak", "auto"} and shutil.which(espeak_bin):
             return (
-                EspeakTTS(espeak_bin, config.tts.espeak_voice, config.tts.espeak_speed, player),
-                f"{espeak_bin} ({player})",
+                EspeakTTS(espeak_bin, config.tts.espeak_voice, config.tts.espeak_speed, player, output_device),
+                f"{espeak_bin} ({player}{device_note})",
             )
         if engine == "auto":
             raise RuntimeError("Neither Piper nor espeak-ng is installed.")

@@ -38,6 +38,27 @@ def test_post_body_and_bearer_header():
     assert "super-secret" not in result.user_message
 
 
+def test_haro_target_is_optional_and_omitted_for_the_desk():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"success": True, "runUuid": "run-h"})
+
+    client = _client(handler)
+    desk = client.send("hello", "button", "desk-topic")
+    assert desk.ok
+    assert "target" not in seen["body"]
+    haro = client.send("Rune what time is it", "haro", "haro-topic", target="Rune")
+    assert haro.ok
+    assert seen["body"] == {
+        "text": "Rune what time is it",
+        "source": "haro",
+        "reply_topic": "haro-topic",
+        "target": "rune",
+    }
+
+
 @pytest.mark.parametrize("source", ["voice", "button", "touch"])
 def test_source_is_forwarded(source):
     seen = {}

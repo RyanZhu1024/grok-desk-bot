@@ -19,6 +19,7 @@ class Source(str, Enum):
     VOICE = "voice"
     BUTTON = "button"
     TOUCH = "touch"
+    HARO = "haro"
 
 
 VALID_SOURCES = {item.value for item in Source}

@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
-# Install Desk Assistant on Raspberry Pi OS and enable the systemd service.
+# Install Desk Assistant or Haro on Raspberry Pi OS and enable a systemd service.
 #
 #   ./install.sh
 #   ./install.sh --with-vosk
+#   ./install.sh --haro
 #
 # Then paste the webhook URL and key into /etc/desk-assistant/config.yaml
 # and reboot. On a laptop, use: python -m desk_assistant --test
+# Haro on a laptop: python -m desk_assistant --variant haro --test
 
 set -euo pipefail
 
 WITH_VOSK=0
+VARIANT=desk
 for arg in "$@"; do
   case "${arg}" in
     --with-vosk) WITH_VOSK=1 ;;
+    --haro) VARIANT=haro; WITH_VOSK=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,10p' "$0"
       exit 0
       ;;
     *)
@@ -26,6 +30,7 @@ done
 
 if [[ ! -r /proc/device-tree/model ]] || ! tr -d '\0' < /proc/device-tree/model | grep -q "Raspberry Pi"; then
   echo "install.sh is for Raspberry Pi OS. On a laptop, run: python -m desk_assistant --test" >&2
+  echo "For Haro: python -m desk_assistant --variant haro --test" >&2
   exit 1
 fi
 
@@ -46,27 +51,39 @@ MODEL_DIR="${STATE_DIR}/models"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_HOME="$(getent passwd "${INSTALL_USER}" | cut -d: -f6)"
 
-echo "Installing Desk Assistant for ${INSTALL_USER}"
+if [[ "${VARIANT}" == "haro" ]]; then
+  echo "Installing Haro for ${INSTALL_USER}"
+else
+  echo "Installing Desk Assistant for ${INSTALL_USER}"
+fi
 
 apt-get update
-apt-get install -y \
-  python3 \
-  python3-venv \
-  python3-pip \
-  python3-gpiozero \
-  python3-lgpio \
-  espeak-ng \
-  alsa-utils \
-  ca-certificates \
-  unzip \
-  curl \
-  rsync \
-  libsdl2-2.0-0 \
-  libsdl2-image-2.0-0 \
-  libsdl2-mixer-2.0-0 \
-  libsdl2-ttf-2.0-0
-
-usermod -aG audio,gpio,video,render,input "${INSTALL_USER}" || true
+PACKAGES=(
+  python3
+  python3-venv
+  python3-pip
+  python3-gpiozero
+  python3-lgpio
+  espeak-ng
+  alsa-utils
+  ca-certificates
+  unzip
+  curl
+  rsync
+)
+if [[ "${VARIANT}" == "haro" ]]; then
+  PACKAGES+=(python3-spidev)
+  usermod -aG audio,gpio,spi,i2c "${INSTALL_USER}" || true
+else
+  PACKAGES+=(
+    libsdl2-2.0-0
+    libsdl2-image-2.0-0
+    libsdl2-mixer-2.0-0
+    libsdl2-ttf-2.0-0
+  )
+  usermod -aG audio,gpio,video,render,input "${INSTALL_USER}" || true
+fi
+apt-get install -y "${PACKAGES[@]}"
 
 mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${STATE_DIR}" "${MODEL_DIR}"
 rsync -a \
@@ -81,10 +98,20 @@ rsync -a \
 
 python3 -m venv --system-site-packages "${INSTALL_DIR}/.venv"
 "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip
-if ! "${INSTALL_DIR}/.venv/bin/pip" install "${INSTALL_DIR}"; then
-  echo "pip install failed; trying the distro pygame package." >&2
-  apt-get install -y python3-pygame
+if [[ "${VARIANT}" == "haro" ]]; then
+  PIP_SPEC="${INSTALL_DIR}[pi]"
+else
+  PIP_SPEC="${INSTALL_DIR}[desk]"
+fi
+if ! "${INSTALL_DIR}/.venv/bin/pip" install "${PIP_SPEC}"; then
+  echo "pip install failed; installing runtime packages directly." >&2
+  if [[ "${VARIANT}" != "haro" ]]; then
+    apt-get install -y python3-pygame || true
+  fi
   "${INSTALL_DIR}/.venv/bin/pip" install "httpx>=0.27,<1" "PyYAML>=6,<7"
+  if [[ "${WITH_VOSK}" -eq 1 ]]; then
+    "${INSTALL_DIR}/.venv/bin/pip" install "vosk>=0.3.45" || true
+  fi
   "${INSTALL_DIR}/.venv/bin/pip" install --no-deps "${INSTALL_DIR}"
 fi
 
@@ -100,7 +127,11 @@ if [[ "${WITH_VOSK}" -eq 1 ]]; then
 fi
 
 if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
-  cp "${INSTALL_DIR}/config.example.yaml" "${CONFIG_DIR}/config.yaml"
+  if [[ "${VARIANT}" == "haro" ]]; then
+    cp "${INSTALL_DIR}/config.haro.example.yaml" "${CONFIG_DIR}/config.yaml"
+  else
+    cp "${INSTALL_DIR}/config.example.yaml" "${CONFIG_DIR}/config.yaml"
+  fi
   echo "Wrote ${CONFIG_DIR}/config.yaml"
 else
   echo "Keeping existing ${CONFIG_DIR}/config.yaml"
@@ -116,17 +147,45 @@ sed -e "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
     -e "s|__USER__|${INSTALL_USER}|g" \
     -e "s|__HOME__|${USER_HOME}|g" \
     "${INSTALL_DIR}/deploy/desk-assistant.service" > /etc/systemd/system/desk-assistant.service
-chmod 644 /etc/systemd/system/desk-assistant.service
+sed -e "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
+    -e "s|__USER__|${INSTALL_USER}|g" \
+    -e "s|__HOME__|${USER_HOME}|g" \
+    "${INSTALL_DIR}/deploy/haro.service" > /etc/systemd/system/haro.service
+chmod 644 /etc/systemd/system/desk-assistant.service /etc/systemd/system/haro.service
 chmod 755 "${INSTALL_DIR}/deploy/run.sh"
 
 ln -sfn "${INSTALL_DIR}/.venv/bin/desk-assistant" /usr/local/bin/desk-assistant
+ln -sfn "${INSTALL_DIR}/.venv/bin/haro" /usr/local/bin/haro
+
+if [[ "${VARIANT}" == "haro" ]]; then
+  BOOT_CONFIG=/boot/firmware/config.txt
+  if [[ ! -f "${BOOT_CONFIG}" && -f /boot/config.txt ]]; then
+    BOOT_CONFIG=/boot/config.txt
+  fi
+  if [[ -f "${BOOT_CONFIG}" ]] && ! grep -q '^dtparam=spi=on' "${BOOT_CONFIG}"; then
+    printf '\n# Haro APA102 eyes on the ReSpeaker HAT\ndtparam=spi=on\n' >> "${BOOT_CONFIG}"
+    echo "Enabled SPI in ${BOOT_CONFIG}"
+  fi
+fi
 
 systemctl daemon-reload
-systemctl enable desk-assistant.service
+if [[ "${VARIANT}" == "haro" ]]; then
+  systemctl disable --now desk-assistant.service >/dev/null 2>&1 || true
+  systemctl enable haro.service
+  CHECK_CMD="haro --check"
+  LOG_UNIT="haro"
+  NEXT="Reboot, then finish the ReSpeaker overlay steps in the README if the mic is not already listed by arecord -l."
+else
+  systemctl disable --now haro.service >/dev/null 2>&1 || true
+  systemctl enable desk-assistant.service
+  CHECK_CMD="desk-assistant --check"
+  LOG_UNIT="desk-assistant"
+  NEXT="Reboot so the audio and GPIO groups and the display session are ready."
+fi
 
 cat <<EOF
 
-Installed. The service is enabled and will start on boot.
+Installed. The ${LOG_UNIT} service is enabled and will start on boot.
 
 Paste the webhook URL and key before you rely on it:
 
@@ -138,11 +197,11 @@ Paste the webhook URL and key before you rely on it:
 
 Check the result (this also prints the ntfy topic):
 
-  sudo -u ${INSTALL_USER} desk-assistant --check
+  sudo -u ${INSTALL_USER} ${CHECK_CMD}
 
-Then reboot so the audio/GPIO groups and the display session are ready:
+${NEXT}
 
   sudo reboot
 
-Logs: journalctl -u desk-assistant -f
+Logs: journalctl -u ${LOG_UNIT} -f
 EOF
