@@ -143,9 +143,9 @@ The routine is not part of this repo. Point the webhook URL at it, and teach it 
 1. Check the bearer key. Return **401** when the key is wrong.
 2. Return **400** when the routine is disabled.
 3. On success, return **200** and `{"success": true, "runUuid": "<id>"}` as soon as the work is queued. Do not hold the HTTP call open until the answer is ready.
-4. Publish the answer as the **raw message body** to `https://ntfy.sh/<reply_topic>`, using the `reply_topic` field from the request. The desk speaks that plain text. A fixed topic also works if you set `ntfy.topic` in the config to the same name.
+4. Publish the answer as the **raw message body** to `https://ntfy.sh/<reply_topic>`, using the `reply_topic` field from the POST body. The desk speaks that plain text.
 
-`ntfy.server` can be a self-hosted ntfy. Public `ntfy.sh` topics are not access-controlled.
+This build uses public [ntfy.sh](https://ntfy.sh). Anyone who can guess the topic can read replies and push messages to the screen, so the generated topic is the secret. To self-host later, run your own ntfy server and set `ntfy.server` to its URL (for example `https://ntfy.example.com`). The desk already sends `reply_topic` on every request, so the routine does not need a fixed topic.
 
 ## Laptop test mode
 
