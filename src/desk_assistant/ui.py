@@ -1,8 +1,12 @@
-"""Fullscreen status screen for the 3.5–5 inch touch panel.
+"""Fullscreen status screen.
 
-The same drawing path runs in a window on a laptop. Touch is just a mouse
-event, so on-screen buttons work on both. Keyboard handling lives in the
-runtime; this module only draws and reports which control was touched.
+The layout is drawn for a 1280×720 landscape desktop, which is the 7-inch
+Touch Display 2 (native 720×1280) after it is rotated. Every margin, row,
+and font size scales with the surface, so the same screen still fits an
+800×480 window. Touch is a mouse event: on the Pi that event comes from
+the touchscreen, and on a laptop it comes from the pointer. Keyboard
+handling lives in the runtime; this module only draws and reports which
+control was touched.
 """
 
 from __future__ import annotations
@@ -46,11 +50,16 @@ STATE_LABEL = {
     State.ERROR: "Problem",
 }
 
+# Design size: Touch Display 2 rotated to landscape.
+DESIGN_WIDTH = 1280
+DESIGN_HEIGHT = 720
+
 
 @dataclass
 class _Layout:
     width: int
     height: int
+    scale: float
     banner: pygame.Rect | None
     header: pygame.Rect
     state: pygame.Rect
@@ -61,12 +70,28 @@ class _Layout:
     help: pygame.Rect | None
 
 
+def scale_for(size: tuple[int, int]) -> float:
+    """Scale factor from the 1280×720 design to `size`.
+
+    Uses the smaller axis so a 1280×720 surface stays 1:1 and an 800×480
+    surface shrinks instead of clipping.
+    """
+    width, height = size
+    if width <= 0 or height <= 0:
+        return 1.0
+    return min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT)
+
+
 class DeskDisplay:
     def __init__(self) -> None:
         self.typing = False
         self.buffer = ""
+        self._scale = 1.0
         self._hits: list[tuple[pygame.Rect, str]] = []
         self._fonts: dict[tuple[str, int, bool], pygame.font.Font] = {}
+
+    def _px(self, design: int) -> int:
+        return max(1, round(design * self._scale))
 
     def hit(self, pos: tuple[int, int]) -> str | None:
         for rect, ident in self._hits:
@@ -77,6 +102,7 @@ class DeskDisplay:
     def render(self, surface: pygame.Surface, snap: Snapshot) -> None:
         if not pygame.font.get_init():
             pygame.font.init()
+        self._scale = scale_for(surface.get_size())
         layout = self._layout(surface.get_size(), snap)
         self._hits = [(rect, ident) for rect, ident, _label, _hint in layout.buttons]
         surface.fill(BG)
@@ -113,33 +139,45 @@ class DeskDisplay:
 
     def _layout(self, size: tuple[int, int], snap: Snapshot) -> _Layout:
         width, height = size
-        margin = 14
-        gap = 8
-        banner_h = 24 if snap.test_mode else 0
-        help_h = 16 if snap.test_mode else 0
-        notif_h = 30 if snap.notification else 0
-        buttons_h = 54
-        y = banner_h + 4
-        header = pygame.Rect(margin, y, width - 2 * margin, 28)
-        state = pygame.Rect(margin, header.bottom + 2, width - 2 * margin, 56)
-        request = pygame.Rect(margin, state.bottom + gap, width - 2 * margin, 68)
+        margin = self._px(28)
+        gap = self._px(12)
+        banner_h = self._px(36) if snap.test_mode else 0
+        help_h = self._px(24) if snap.test_mode else 0
+        notif_h = self._px(44) if snap.notification else 0
+        buttons_h = self._px(92)
+        y = banner_h + self._px(6)
+        header = pygame.Rect(margin, y, width - 2 * margin, self._px(48))
+        state = pygame.Rect(margin, header.bottom + self._px(4), width - 2 * margin, self._px(96))
+        request = pygame.Rect(margin, state.bottom + gap, width - 2 * margin, self._px(112))
         reply_top = request.bottom + gap
 
         bottom = height - margin
         help_rect = None
         if help_h:
             help_rect = pygame.Rect(margin, bottom - help_h, width - 2 * margin, help_h)
-            bottom = help_rect.top - 2
+            bottom = help_rect.top - self._px(4)
         button_row = pygame.Rect(margin, bottom - buttons_h, width - 2 * margin, buttons_h)
         bottom = button_row.top - gap
         notification = None
         if notif_h:
             notification = pygame.Rect(margin, bottom - notif_h, width - 2 * margin, notif_h)
             bottom = notification.top - gap
-        reply = pygame.Rect(margin, reply_top, width - 2 * margin, max(64, bottom - reply_top))
+        reply = pygame.Rect(margin, reply_top, width - 2 * margin, max(1, bottom - reply_top))
         banner = pygame.Rect(0, 0, width, banner_h) if banner_h else None
         controls = self._button_rects(button_row, snap)
-        return _Layout(width, height, banner, header, state, request, reply, notification, controls, help_rect)
+        return _Layout(
+            width,
+            height,
+            self._scale,
+            banner,
+            header,
+            state,
+            request,
+            reply,
+            notification,
+            controls,
+            help_rect,
+        )
 
     def _button_rects(self, row: pygame.Rect, snap: Snapshot) -> list[tuple[pygame.Rect, str, str, str]]:
         specs = [("ptt", "Talk", "space")]
@@ -147,7 +185,7 @@ class DeskDisplay:
             specs.append((button.id, button.label, button.key))
         weights = [1.35] + [1.0] * (len(specs) - 1)
         total = sum(weights)
-        gap = 8
+        gap = self._px(12)
         usable = row.width - gap * (len(specs) - 1)
         x = row.x
         rects = []
@@ -161,46 +199,47 @@ class DeskDisplay:
 
     def _banner(self, surface: pygame.Surface, rect: pygame.Rect, snap: Snapshot) -> None:
         pygame.draw.rect(surface, BANNER, rect)
-        font = self._font(13, bold=True)
+        font = self._font(20, bold=True)
         label = font.render("TEST MODE", True, AMBER)
         note_text = snap.test_note or "mock assistant on this computer"
-        note = self._font(13).render(note_text, True, INK)
-        surface.blit(label, (14, rect.centery - label.get_height() // 2))
-        surface.blit(note, (14 + label.get_width() + 10, rect.centery - note.get_height() // 2))
+        note = self._font(20).render(note_text, True, INK)
+        pad = self._px(28)
+        surface.blit(label, (pad, rect.centery - label.get_height() // 2))
+        surface.blit(note, (pad + label.get_width() + self._px(14), rect.centery - note.get_height() // 2))
 
     def _header(self, surface: pygame.Surface, rect: pygame.Rect, snap: Snapshot) -> None:
-        word = self._font(18, bold=True).render("DESK", True, INK)
-        sub = self._font(13).render("ASSISTANT", True, DIM)
-        surface.blit(word, (rect.x, rect.y + 2))
-        surface.blit(sub, (rect.x + word.get_width() + 8, rect.y + 7))
-        clock = self._font(16).render(time.strftime("%H:%M"), True, MUTED)
-        surface.blit(clock, (rect.right - clock.get_width(), rect.y + 4))
+        word = self._font(28, bold=True).render("DESK", True, INK)
+        sub = self._font(18).render("ASSISTANT", True, DIM)
+        surface.blit(word, (rect.x, rect.y + self._px(4)))
+        surface.blit(sub, (rect.x + word.get_width() + self._px(12), rect.y + self._px(12)))
+        clock = self._font(24).render(time.strftime("%H:%M"), True, MUTED)
+        surface.blit(clock, (rect.right - clock.get_width(), rect.y + self._px(8)))
         link = "live" if snap.ntfy_connected else "offline"
         color = SAGE if snap.ntfy_connected else RED
-        link_label = self._font(13).render(link, True, color)
-        dot_x = rect.right - clock.get_width() - 18 - link_label.get_width()
-        pygame.draw.circle(surface, color, (dot_x, rect.y + 14), 4)
-        surface.blit(link_label, (dot_x + 10, rect.y + 6))
+        link_label = self._font(18).render(link, True, color)
+        dot_x = rect.right - clock.get_width() - self._px(28) - link_label.get_width()
+        pygame.draw.circle(surface, color, (dot_x, rect.y + self._px(22)), self._px(6))
+        surface.blit(link_label, (dot_x + self._px(14), rect.y + self._px(10)))
 
     def _state(self, surface: pygame.Surface, rect: pygame.Rect, snap: Snapshot) -> None:
         color = STATE_COLOR[snap.state]
         pulse = 0.5 + 0.5 * math.sin(time.monotonic() * (4 if snap.state is State.LISTENING else 2))
-        radius = 16 if snap.state is State.LISTENING else 14
-        center = (rect.x + 18, rect.y + 24)
+        radius = self._px(26 if snap.state is State.LISTENING else 22)
+        center = (rect.x + self._px(32), rect.y + self._px(40))
         glow = _mix(color, BG, 0.55 if snap.state is State.IDLE else 0.35 + 0.15 * pulse)
-        pygame.draw.circle(surface, glow, center, radius + 7)
+        pygame.draw.circle(surface, glow, center, radius + self._px(12))
         pygame.draw.circle(surface, color, center, radius)
         if snap.state is State.THINKING:
-            self._dots(surface, (rect.right - 28, rect.y + 22))
+            self._dots(surface, (rect.right - self._px(48), rect.centery))
         elif snap.state is State.SPEAKING:
-            self._bars(surface, (rect.right - 46, rect.y + 22), color)
-        title = self._font(34, bold=True).render(STATE_LABEL[snap.state], True, INK)
-        title_x = rect.x + 46
-        surface.blit(title, (title_x, rect.y + 2))
+            self._bars(surface, (rect.right - self._px(80), rect.centery), color)
+        title = self._font(52, bold=True).render(STATE_LABEL[snap.state], True, INK)
+        title_x = rect.x + self._px(78)
+        surface.blit(title, (title_x, rect.y + self._px(4)))
         sub = snap.notice or snap.substatus
         sub_color = AMBER if snap.notice else MUTED
-        sub_img = self._font(16).render(sub, True, sub_color)
-        surface.blit(sub_img, (title_x, rect.y + 38))
+        sub_img = self._font(24).render(sub, True, sub_color)
+        surface.blit(sub_img, (title_x, rect.y + self._px(58)))
 
     def _card(
         self,
@@ -213,22 +252,34 @@ class DeskDisplay:
         ink: tuple[int, int, int],
         accent: tuple[int, int, int] | None = None,
     ) -> None:
-        pygame.draw.rect(surface, CARD, rect, border_radius=12)
-        pygame.draw.rect(surface, accent or LINE, rect, width=1, border_radius=12)
-        label = self._font(12, bold=True).render(kicker.upper(), True, DIM)
-        surface.blit(label, (rect.x + 14, rect.y + 8))
+        radius = self._px(16)
+        pad = self._px(20)
+        pygame.draw.rect(surface, CARD, rect, border_radius=radius)
+        pygame.draw.rect(surface, accent or LINE, rect, width=max(1, self._px(2)), border_radius=radius)
+        label = self._font(16, bold=True).render(kicker.upper(), True, DIM)
+        surface.blit(label, (rect.x + pad, rect.y + self._px(12)))
         if badge:
-            badge_img = self._font(12, bold=True).render(badge, True, MUTED)
-            surface.blit(badge_img, (rect.right - 14 - badge_img.get_width(), rect.y + 8))
-        text_rect = pygame.Rect(rect.x + 14, rect.y + 26, rect.width - 28, rect.height - 34)
-        self._draw_wrapped(surface, body, self._font(18), ink, text_rect)
+            badge_img = self._font(16, bold=True).render(badge, True, MUTED)
+            surface.blit(badge_img, (rect.right - pad - badge_img.get_width(), rect.y + self._px(12)))
+        text_rect = pygame.Rect(
+            rect.x + pad,
+            rect.y + self._px(40),
+            rect.width - 2 * pad,
+            rect.height - self._px(52),
+        )
+        self._draw_wrapped(surface, body, self._font(26), ink, text_rect)
 
     def _notification(self, surface: pygame.Surface, rect: pygame.Rect, text: str) -> None:
-        pygame.draw.rect(surface, (36, 40, 38), rect, border_radius=8)
-        kicker = self._font(11, bold=True).render("NOTIFICATION", True, TEAL)
-        surface.blit(kicker, (rect.x + 10, rect.centery - kicker.get_height() // 2))
-        remain = pygame.Rect(rect.x + 16 + kicker.get_width(), rect.y, rect.width - 28 - kicker.get_width(), rect.height)
-        self._draw_wrapped(surface, text, self._font(14), INK, remain, max_lines=1, valign=True)
+        pygame.draw.rect(surface, (36, 40, 38), rect, border_radius=self._px(12))
+        kicker = self._font(16, bold=True).render("NOTIFICATION", True, TEAL)
+        surface.blit(kicker, (rect.x + self._px(16), rect.centery - kicker.get_height() // 2))
+        remain = pygame.Rect(
+            rect.x + self._px(24) + kicker.get_width(),
+            rect.y,
+            rect.width - self._px(40) - kicker.get_width(),
+            rect.height,
+        )
+        self._draw_wrapped(surface, text, self._font(22), INK, remain, max_lines=1, valign=True)
 
     def _button(
         self,
@@ -242,11 +293,12 @@ class DeskDisplay:
         active = snap.active_control == ident or (ident == "ptt" and snap.state is State.LISTENING)
         fill = _mix(AMBER, CARD, 0.25) if active else CARD
         border = AMBER if active else LINE
-        pygame.draw.rect(surface, fill, rect, border_radius=10)
-        pygame.draw.rect(surface, border, rect, width=1, border_radius=10)
-        title = self._font(16, bold=True).render(label, True, INK if active else MUTED)
+        radius = self._px(14)
+        pygame.draw.rect(surface, fill, rect, border_radius=radius)
+        pygame.draw.rect(surface, border, rect, width=max(1, self._px(2)), border_radius=radius)
+        title = self._font(24, bold=True).render(label, True, INK if active else MUTED)
         if snap.test_mode and hint:
-            sub = self._font(12).render(hint, True, DIM)
+            sub = self._font(16).render(hint, True, DIM)
             block = title.get_height() + sub.get_height()
             surface.blit(title, (rect.centerx - title.get_width() // 2, rect.centery - block // 2))
             surface.blit(sub, (rect.centerx - sub.get_width() // 2, rect.centery - block // 2 + title.get_height()))
@@ -254,35 +306,46 @@ class DeskDisplay:
             surface.blit(title, (rect.centerx - title.get_width() // 2, rect.centery - title.get_height() // 2))
 
     def _help(self, surface: pygame.Surface, rect: pygame.Rect, snap: Snapshot) -> None:
-        parts = ["Hold Space to talk", "1–3 presets", "T to type", "Esc quits"]
+        keys = [button.key for button in snap.buttons if button.key]
+        if len(keys) >= 2 and all(len(key) == 1 and key.isdigit() for key in keys):
+            preset = f"{keys[0]}–{keys[-1]} presets"
+        elif keys:
+            preset = "presets " + ", ".join(keys)
+        else:
+            preset = "on-screen presets"
+        parts = ["Hold Space to talk", preset, "T to type", "Esc quits"]
         if snap.footer:
             parts.append(snap.footer)
-        img = self._font(12).render("  ·  ".join(parts), True, DIM)
+        img = self._font(18).render("  ·  ".join(parts), True, DIM)
         surface.blit(img, (rect.x, rect.y))
 
     def _composer(self, surface: pygame.Surface, snap: Snapshot) -> None:
         width, height = surface.get_size()
-        rect = pygame.Rect(14, height - 64, width - 28, 50)
-        pygame.draw.rect(surface, (18, 16, 14), rect, border_radius=10)
-        pygame.draw.rect(surface, AMBER, rect, width=2, border_radius=10)
-        hint = self._font(12, bold=True).render("TYPE A REQUEST", True, AMBER)
-        surface.blit(hint, (rect.x + 12, rect.y + 6))
+        pad = self._px(28)
+        rect = pygame.Rect(pad, height - self._px(110), width - 2 * pad, self._px(84))
+        radius = self._px(14)
+        pygame.draw.rect(surface, (18, 16, 14), rect, border_radius=radius)
+        pygame.draw.rect(surface, AMBER, rect, width=max(1, self._px(3)), border_radius=radius)
+        hint = self._font(16, bold=True).render("TYPE A REQUEST", True, AMBER)
+        surface.blit(hint, (rect.x + self._px(18), rect.y + self._px(10)))
         shown = self.buffer or "What should I ask?"
         color = INK if self.buffer else DIM
-        img = self._font(16).render(shown[-80:], True, color)
-        surface.blit(img, (rect.x + 12, rect.y + 24))
+        img = self._font(24).render(shown[-80:], True, color)
+        surface.blit(img, (rect.x + self._px(18), rect.y + self._px(40)))
 
     def _dots(self, surface: pygame.Surface, center: tuple[int, int]) -> None:
         phase = int(time.monotonic() * 3) % 3
+        step = self._px(16)
+        radius = self._px(5)
         for index in range(3):
             color = INK if index == phase else _mix(INK, TEAL, 0.65)
-            pygame.draw.circle(surface, color, (center[0] - 16 + index * 10, center[1]), 3)
+            pygame.draw.circle(surface, color, (center[0] - step + index * step, center[1]), radius)
 
     def _bars(self, surface: pygame.Surface, origin: tuple[int, int], color: tuple[int, int, int]) -> None:
         for index in range(4):
-            height = 6 + int(12 * abs(math.sin(time.monotonic() * 7 + index * 0.7)))
-            rect = pygame.Rect(origin[0] + index * 7, origin[1] - height // 2, 4, height)
-            pygame.draw.rect(surface, color, rect, border_radius=2)
+            height = self._px(10) + int(self._px(22) * abs(math.sin(time.monotonic() * 7 + index * 0.7)))
+            rect = pygame.Rect(origin[0] + index * self._px(12), origin[1] - height // 2, self._px(6), height)
+            pygame.draw.rect(surface, color, rect, border_radius=self._px(3))
 
     def _draw_wrapped(
         self,
@@ -320,7 +383,8 @@ class DeskDisplay:
             return "The request was sent. The reply will show up here.", MUTED, "Reply"
         return "The reply will show up here.", DIM, "Reply"
 
-    def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
+    def _font(self, design_size: int, bold: bool = False) -> pygame.font.Font:
+        size = max(11, round(design_size * self._scale))
         key = ("dejavusans", size, bold)
         cached = self._fonts.get(key)
         if cached is not None:

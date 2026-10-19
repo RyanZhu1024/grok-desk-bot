@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
 import threading
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -338,14 +340,195 @@ def player_argv(player: str, wav: str, device: str = "") -> list[str]:
     return [player, wav]
 
 
+_ALSA_CARD_RE = re.compile(
+    r"card\s+\d+:\s+(\S+)\s+\[(.*?)\],\s+device\s+(\d+):\s+(.*)"
+)
+
+
+@dataclass(frozen=True)
+class DeviceChoice:
+    """A capture or playback device chosen for this run.
+
+    `device` is empty when the system default should be used. `source` is
+    `configured` (exact `audio.device` or `audio.output_device`), `matched`
+    (name substring), or `default` (no match, or nothing to search).
+    """
+
+    role: str
+    match: str
+    device: str
+    detail: str
+    source: str
+
+    def report(self) -> str:
+        if self.source == "configured":
+            field = "audio.device" if self.role == "input" else "audio.output_device"
+            return f"Audio {self.role}: {self.device}  (set in {field})"
+        if self.source == "matched":
+            return f"Audio {self.role}: {self.device}  (matched {self.match!r}; {self.detail})"
+        shown = self.detail or "using the system default"
+        return f"Audio {self.role}: default  ({shown})"
+
+
+def parse_alsa_list(text: str) -> list[tuple[str, str]]:
+    """Parse `arecord -l` or `aplay -l` into `(plughw id, description)` pairs."""
+    found: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        match = _ALSA_CARD_RE.search(line.strip())
+        if not match:
+            continue
+        card_name, description, dev, _rest = match.groups()
+        device_id = f"plughw:CARD={card_name},DEV={dev}"
+        found.append((device_id, f"{description} ({device_id})"))
+    return found
+
+
+def parse_pactl_short(text: str, *, skip_monitors: bool = False) -> list[tuple[str, str]]:
+    """Parse `pactl list short sinks` or `sources` into `(name, name)` pairs."""
+    found: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or not parts[0].isdigit():
+            continue
+        name = parts[1]
+        if skip_monitors and name.endswith(".monitor"):
+            continue
+        found.append((name, name))
+    return found
+
+
+def select_named_device(match: str, candidates: list[tuple[str, str]]) -> tuple[str, str] | None:
+    """Pick the first candidate whose id or description contains `match`.
+
+    The comparison is case-insensitive. A non-monitor id match wins over a
+    `.monitor` id. An empty match selects nothing, so the caller uses the
+    default device.
+    """
+    needle = match.strip().lower()
+    if not needle:
+        return None
+    id_hits = [
+        item
+        for item in candidates
+        if needle in item[0].lower() and not item[0].lower().endswith(".monitor")
+    ]
+    if not id_hits:
+        id_hits = [item for item in candidates if needle in item[0].lower()]
+    if id_hits:
+        return id_hits[0]
+    desc_hits = [item for item in candidates if needle in item[1].lower()]
+    return desc_hits[0] if desc_hits else None
+
+
+def _command_output(argv: list[str]) -> str | None:
+    if shutil.which(argv[0]) is None:
+        return None
+    try:
+        completed = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return completed.stdout or ""
+
+
+def probe_capture_devices() -> tuple[list[tuple[str, str]], str]:
+    text = _command_output(["arecord", "-l"])
+    if text is None:
+        return [], "arecord is not installed"
+    return parse_alsa_list(text), "arecord -l"
+
+
+def probe_playback_devices(player: str) -> tuple[list[tuple[str, str]], str]:
+    if player == "paplay":
+        text = _command_output(["pactl", "list", "short", "sinks"])
+        if text is None:
+            return [], "pactl is not installed"
+        devices = parse_pactl_short(text)
+        if not devices:
+            return [], "pactl list short sinks returned nothing"
+        return devices, "pactl list short sinks"
+    if player == "aplay":
+        text = _command_output(["aplay", "-l"])
+        if text is None:
+            return [], "aplay is not installed"
+        return parse_alsa_list(text), "aplay -l"
+    return [], f"{player} uses the system default"
+
+
+def resolve_input_device(
+    config: Config,
+    *,
+    candidates: list[tuple[str, str]] | None = None,
+    probe_note: str = "",
+) -> DeviceChoice:
+    explicit = config.audio.device.strip()
+    if explicit:
+        return DeviceChoice("input", config.audio.input_match, explicit, "set in audio.device", "configured")
+    match = config.audio.input_match.strip()
+    if candidates is None:
+        candidates, probe_note = probe_capture_devices()
+    chosen = select_named_device(match, candidates)
+    if chosen:
+        device, detail = chosen
+        return DeviceChoice("input", match, device, detail, "matched")
+    if not match:
+        detail = "audio.input_match is empty"
+    elif not candidates and probe_note and "not installed" in probe_note:
+        detail = f"{probe_note}, so {match!r} was not applied"
+    else:
+        detail = f"no capture device matched {match!r}"
+    return DeviceChoice("input", match, "", detail, "default")
+
+
+def resolve_output_device(
+    config: Config,
+    player: str,
+    *,
+    candidates: list[tuple[str, str]] | None = None,
+    probe_note: str = "",
+) -> DeviceChoice:
+    match = config.audio.output_match.strip()
+    explicit = config.audio.output_device.strip()
+    if explicit:
+        return DeviceChoice("output", match, explicit, "set in audio.output_device", "configured")
+    if player not in {"paplay", "aplay"}:
+        return DeviceChoice(
+            "output",
+            match,
+            "",
+            f"{player} uses the system default",
+            "default",
+        )
+    if candidates is None:
+        candidates, probe_note = probe_playback_devices(player)
+    chosen = select_named_device(match, candidates)
+    if chosen:
+        device, detail = chosen
+        return DeviceChoice("output", match, device, detail, "matched")
+    if not match:
+        detail = "audio.output_match is empty"
+    elif not candidates and probe_note and ("not installed" in probe_note or "returned nothing" in probe_note):
+        detail = f"{probe_note}, so {match!r} was not applied"
+    else:
+        detail = f"no playback device matched {match!r}"
+    return DeviceChoice("output", match, "", detail, "default")
+
+
 def build_recorder(config: Config, *, force_mock: bool = False) -> tuple[Recorder, str]:
     if force_mock:
         return MockRecorder(config.audio.sample_rate), "mock recorder"
     if shutil.which("arecord"):
-        return (
-            ArecordRecorder(config.audio.sample_rate, config.audio.device),
-            "arecord",
-        )
+        chosen = resolve_input_device(config)
+        if chosen.device:
+            label = f"arecord ({chosen.device})"
+        else:
+            label = f"arecord (default; {chosen.detail})"
+        return ArecordRecorder(config.audio.sample_rate, chosen.device), label
     return MockRecorder(config.audio.sample_rate), "mock recorder (arecord not installed)"
 
 
@@ -393,8 +576,8 @@ def build_tts(config: Config, *, prefer_mock: bool = False) -> tuple[TextToSpeec
                 return MockTTS(), "mock text-to-speech"
             return UnavailableTTS(reason), f"unavailable ({reason})"
         player = detected
-    output_device = config.audio.output_device.strip()
-    device_note = f", {output_device}" if output_device else ""
+    output = resolve_output_device(config, player)
+    device_note = output.device or "default"
     try:
         engine = config.tts.engine
         piper_ready = bool(config.tts.piper_model) and Path(config.tts.piper_model).is_file() and (
@@ -402,16 +585,16 @@ def build_tts(config: Config, *, prefer_mock: bool = False) -> tuple[TextToSpeec
         )
         if engine == "piper" or (engine == "auto" and piper_ready):
             return (
-                PiperTTS(config.tts.piper_bin, config.tts.piper_model, player, output_device),
-                f"piper ({player}{device_note})",
+                PiperTTS(config.tts.piper_bin, config.tts.piper_model, player, output.device),
+                f"piper ({player}, {device_note})",
             )
         espeak_bin = config.tts.espeak_bin
         if shutil.which(espeak_bin) is None and shutil.which("espeak"):
             espeak_bin = "espeak"
         if engine in {"espeak", "auto"} and shutil.which(espeak_bin):
             return (
-                EspeakTTS(espeak_bin, config.tts.espeak_voice, config.tts.espeak_speed, player, output_device),
-                f"{espeak_bin} ({player}{device_note})",
+                EspeakTTS(espeak_bin, config.tts.espeak_voice, config.tts.espeak_speed, player, output.device),
+                f"{espeak_bin} ({player}, {device_note})",
             )
         if engine == "auto":
             raise RuntimeError("Neither Piper nor espeak-ng is installed.")

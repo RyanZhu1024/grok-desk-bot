@@ -16,9 +16,19 @@ def test_example_config_loads_and_generates_a_topic(tmp_path, monkeypatch):
     assert config.buttons[0].id == "briefing"
     assert config.buttons[0].key == "1"
     assert config.buttons[0].gpio == 27
+    assert [(button.id, button.gpio) for button in config.buttons] == [
+        ("briefing", 27),
+        ("calendar", 22),
+        ("inbox", 23),
+    ]
     assert config.ptt.gpio == 17
     assert config.ptt.key == "space"
     assert config.ui.fullscreen is True
+    assert config.ui.width == 1280
+    assert config.ui.height == 720
+    assert config.audio.input_match == "PowerConf"
+    assert config.audio.output_match == "PowerConf"
+    assert config.audio.device == ""
     assert config.reply_timeout_seconds == 180
     assert config.ntfy.topic.startswith("desk-")
     assert len(config.ntfy.topic) > 20

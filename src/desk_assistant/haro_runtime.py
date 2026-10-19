@@ -10,7 +10,15 @@ import termios
 import time
 import tty
 
-from desk_assistant.audio import MockTTS, build_recorder, build_stt, build_tts
+from desk_assistant.audio import (
+    MockTTS,
+    build_recorder,
+    build_stt,
+    build_tts,
+    detect_player,
+    resolve_input_device,
+    resolve_output_device,
+)
 from desk_assistant.battery import PiSugarBattery
 from desk_assistant.config import Config, load_config, redact_key
 from desk_assistant.eyes import Apa102Eyes, ConsoleEyes
@@ -75,8 +83,11 @@ def build_haro(
 def format_haro_check(config: Config) -> str:
     _stt, stt_name = build_stt(config)
     _tts, tts_name = build_tts(config)
-    capture = config.audio.device.strip() or "default"
-    playback = config.audio.output_device.strip() or "default"
+    player = config.tts.player
+    if player == "auto":
+        player = detect_player() or "aplay"
+    capture = resolve_input_device(config)
+    playback = resolve_output_device(config, player)
     lines = [
         "Variant: haro",
         f"Config file: {config.config_path or '(defaults, no config.yaml found)'}",
@@ -85,8 +96,8 @@ def format_haro_check(config: Config) -> str:
         f"ntfy: {config.ntfy.server.rstrip('/')}/{config.ntfy.topic}",
         f"Speech-to-text: {stt_name}",
         f"Text-to-speech: {tts_name}",
-        f"Audio input: {capture}",
-        f"Audio output: {playback}",
+        capture.report(),
+        playback.report(),
         f"Button: BCM {config.haro.button_gpio} (hold to talk, release to send)",
         (
             f"Eyes: {config.haro.led_count} APA102 LEDs on SPI "

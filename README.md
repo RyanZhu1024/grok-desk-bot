@@ -1,6 +1,6 @@
 # Desk Assistant
 
-A small push-to-talk desk assistant for a Raspberry Pi 5. Arcade buttons and a touchscreen send text to a Grok Bot webhook. The reply comes back as plain text on an [ntfy](https://ntfy.sh) topic, shows on the screen, and is spoken out loud.
+A small push-to-talk desk assistant for a Raspberry Pi 5. Four LED arcade buttons and the official 7-inch touchscreen send text to a Grok Bot webhook. The reply comes back as plain text on an [ntfy](https://ntfy.sh) topic, shows on the screen, and is spoken through a USB speakerphone.
 
 The same program runs on a laptop. Keyboard keys stand in for the GPIO buttons, and `--test` answers with a local mock of the webhook so nothing leaves the machine.
 
@@ -40,53 +40,77 @@ The first ntfy message that arrives while the desk is waiting is the reply: it i
 
 ## Parts
 
+This is the hardware the software is set up for.
+
 | Piece | Notes |
 | --- | --- |
-| Raspberry Pi 5, 4 GB or more, and the official 27 W USB-C supply | Raspberry Pi OS 64-bit **with desktop**, autologin on |
-| microSD, 32 GB or larger | |
-| HDMI touchscreen, about 3.5 to 5 inch, 800×480 | Waveshare 4.3" or 5" HDMI + USB touch keeps the GPIO header free. A DSI panel is fine too if it does not reuse the 40-pin header |
-| USB microphone | |
-| USB speaker, or a USB audio adapter and a small powered speaker | **The Pi 5 has no 3.5 mm jack.** HDMI audio also works if the display has speakers |
-| 3 or 4 momentary arcade buttons | One is push-to-talk. Two presets are the usual set. A third preset is optional |
-| Female-to-female jumper wires | |
-| Optional 220 Ω resistors | Only if the buttons have LEDs. Power LEDs from 3.3 V, never 5 V, and never into a GPIO pin |
+| Raspberry Pi 5, 8 GB | Raspberry Pi OS 64-bit **with desktop**, autologin on |
+| Raspberry Pi Touch Display 2, 7 inch | Native 720×1280 portrait. Used rotated to 1280×720 landscape |
+| SmartiPi Touch Pro 3 | Stand for the Pi 5 and the Touch Display 2 |
+| Raspberry Pi 27 W USB-C power supply | |
+| A2 microSD, 64 GB | |
+| Raspberry Pi Active Cooler | |
+| RTC battery | For the Pi 5 real-time clock |
+| Anker PowerConf S330 | USB speakerphone. One device for the microphone and the speaker |
+| Adafruit LED arcade buttons, 4 | In a separate box. Switches go to GPIO. LEDs are powered from 5 V and are not driven by code |
+| Enclosure for the buttons | Long leads back to the Pi: 4 signal wires, GND, and 5 V |
+
+## Flash the card
+
+Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on another computer.
+
+1. Install Imager and insert the 64 GB A2 microSD card.
+2. Choose device **Raspberry Pi 5**.
+3. Choose OS **Raspberry Pi OS (64-bit)**. That is the desktop image. Do not choose Lite. The desk UI needs the Wayland session.
+4. Choose the microSD card as the storage.
+5. When Imager offers customisation, set the hostname, username, password, wireless network, and locale. Turn on SSH if you want a remote shell.
+6. Write the card and let Imager verify it.
+7. Fit the Active Cooler, RTC battery, Touch Display 2, and SmartiPi stand. Boot from the new card with the 27 W supply.
+8. On the first desktop session, turn on autologin so a graphical session exists at boot: `sudo raspi-config`, then System Options, Boot / Auto Login, Desktop Autologin. Rotate the panel to landscape before relying on the fullscreen UI. That is described under [Screen](#screen).
 
 ## Wiring
 
-BCM numbering, internal pull-up, press connects the pin to ground. No external resistor on the switch.
+The four Adafruit LED arcade buttons live in their own box, with long leads back to the Pi header. Six wires are enough: four switch signals, one GND, and one 5 V.
 
-The header is shown with pin 1 at the top left, the way `pinout` prints it. Pins on the left column are the odd numbers.
+BCM numbering. Each switch uses the internal pull-up, and a press connects that GPIO pin to ground. No resistor on the switch. The LED pair is a separate circuit. It is tied to 5 V through the resistor that comes with the button, and the program never switches it. The lamps are on whenever the Pi has 5 V.
+
+The Touch Display 2 power cable already occupies pin 2 (5 V) and pin 6 (GND). Its plug may also cover pin 4. Leave that cable where it is. Take button ground from pin 9. Take LED 5 V from pin 4 when that pin is free. If the display plug covers pin 4, add a stacking header so pin 2 or pin 4 can feed the LED lead, or splice the LED 5 V lead onto the display cable's red wire. Do not connect 5 V to a GPIO pin.
 
 ```
-          3V3 (1)  (2)  5V
-       GPIO2  (3)  (4)  5V
-       GPIO3  (5)  (6)  GND
-       GPIO4  (7)  (8)  GPIO14
-         GND  (9)  (10) GPIO15     pin 9  GND ---- talk button ---- pin 11 GPIO17   push-to-talk
-      GPIO17 (11)  (12) GPIO18
-      GPIO27 (13)  (14) GND        pin 14 GND ---- briefing ------- pin 13 GPIO27
-      GPIO22 (15)  (16) GPIO23     pin 20 GND ---- calendar ------- pin 15 GPIO22
-         3V3 (17)  (18) GPIO24     pin 25 GND ---- inbox (optional) pin 16 GPIO23
-         ...
-         GND (25)
+Display power cable stays on pin 2 (5 V) and pin 6 (GND).
+
+Button box, six long leads:
+
+  pin 4  5V  ----+---- resistor ---- LED anode, talk
+                 +---- resistor ---- LED anode, briefing
+                 +---- resistor ---- LED anode, calendar
+                 +---- resistor ---- LED anode, inbox
+
+  pin 9  GND ----+---- all four LED cathodes
+                 +---- all four switch commons
+
+  pin 11 GPIO17  ---- talk switch
+  pin 13 GPIO27  ---- briefing switch
+  pin 15 GPIO22  ---- calendar switch
+  pin 16 GPIO23  ---- inbox switch
 ```
 
 | Control | BCM | Physical pin | Other leg | Laptop key |
 | --- | --- | --- | --- | --- |
 | Push to talk | 17 | 11 | GND, pin 9 | Hold Space |
-| Briefing | 27 | 13 | GND, pin 14 | 1 |
-| Calendar | 22 | 15 | GND, pin 20 | 2 |
-| Inbox (optional) | 23 | 16 | GND, pin 25 | 3 |
+| Briefing | 27 | 13 | GND, pin 9 | 1 |
+| Calendar | 22 | 15 | GND, pin 9 | 2 |
+| Inbox | 23 | 16 | GND, pin 9 | 3 |
 
-Lit arcade buttons have a separate pair of LED legs. Wire those to **3.3 V (pin 1)** through a 220 Ω resistor and to a GND pin. Do not connect 5 V to the LED if it shares any connection with a GPIO pin, and do not connect the LED to a GPIO pin.
+Inbox is the fourth button and is enabled by default. Each LED gets its own series resistor on the 5 V side. Switch commons and LED cathodes share the single GND lead. That is safe because the switch and the LED are separate pairs of legs on these buttons.
 
-Leave I2C (pins 3 and 5), UART, and SPI free. These four GPIO pins are enough.
+Leave I2C (pins 3 and 5), UART, and SPI free.
 
 The on-screen buttons work even if a GPIO wire is missing. A finger on an on-screen preset sends `source: "touch"`. A GPIO press sends `source: "button"`.
 
 ## Set up the Pi
 
-1. Flash Raspberry Pi OS 64-bit with desktop. Enable autologin so a display session exists at boot. Boot once with the screen, mic, and speaker connected.
+1. Flash the card as above, rotate the display to landscape, and boot once with the PowerConf plugged into USB.
 2. Clone this project onto the Pi.
 3. Install and enable the boot service:
 
@@ -193,13 +217,60 @@ Both speech-to-text and text-to-speech are chosen in config. `auto` uses the fir
 | Speech-to-text | Vosk (`stt.engine: vosk`, model directory in `stt.vosk_model`) | whisper.cpp (`stt.engine: whisper_cpp`, `whisper-cli` plus a ggml tiny or base model). `mock` returns `stt.mock_transcript` |
 | Text-to-speech | espeak-ng, installed by `install.sh` | Piper (`tts.engine: piper`, binary plus an `.onnx` voice and the matching `.onnx.json`). `mock` records the phrase and does not play it |
 
-Playback prefers `paplay` (PipeWire / Pulse), then `aplay`, then `ffplay`. Set `tts.player` if you need a specific device. Set `audio.device` to an arecord device such as `plughw:1,0` when the USB mic is not the default. `arecord -l` lists capture devices.
+Playback prefers `paplay` (PipeWire / Pulse), then `aplay`, then `ffplay`. The microphone and the speaker are the same Anker PowerConf S330. `audio.input_match` and `audio.output_match` default to `PowerConf`. On startup the program looks for a capture device and a playback device whose name contains that text.
+
+Capture is chosen from `arecord -l`. A card named `PowerConf` becomes `plughw:CARD=PowerConf,DEV=0`. Playback through `paplay` is chosen from `pactl list short sinks` (a sink name such as `alsa_output.usb-Anker_PowerConf_S330-00.analog-stereo`). Playback through `aplay` uses the same card name from `aplay -l`. If nothing matches, or the match is empty, that direction uses the system default device. `audio.device` is an optional exact arecord string and wins over `input_match`. `audio.output_device` is the same for playback and wins over `output_match`.
+
+`desk-assistant --check` prints the input and output it actually selected, including when it fell back to the default.
 
 Piper and whisper.cpp are not downloaded by the installer; the model files are large. Point the config at the paths once you have them.
 
 ## Screen
 
-The UI is a fullscreen pygame window aimed at 800×480. It shows idle, listening, transcribing, thinking, speaking, and a problem state, plus the last request, the last reply, and a notification line. Change `ui.width`, `ui.height`, and `ui.fullscreen` if the panel is a different size. `ui.driver` can be `auto`, `wayland`, `x11`, or `kmsdrm`.
+The Touch Display 2 panel is natively 720×1280, portrait. This desk uses it rotated to a 1280×720 landscape desktop. The UI is drawn for that size and scales with the window, so the same layout still fits an 800×480 surface. It shows idle, listening, transcribing, thinking, speaking, and a problem state, plus the last request, the last reply, and a notification line. `ui.width` and `ui.height` default to 1280 and 720. `ui.driver` can be `auto`, `wayland`, `x11`, or `kmsdrm`.
+
+Current Raspberry Pi OS runs the desktop on Wayland with the labwc compositor. Rotate the panel there, not in the desk program. The desk then opens a fullscreen window on a desktop that is already 1280×720.
+
+### Rotate to landscape
+
+On the desktop:
+
+1. Open Preferences, Control Centre, Screens.
+2. Right-click the Touch Display 2. It is usually labelled `DSI-1`. Use `DSI-2` if the cable is in the other port. `wlr-randr` prints the name.
+3. Choose Orientation, then **Left** or **Right**. Left is 90° clockwise and Right is 270° clockwise. Pick the one that is upright in the SmartiPi stand. Both turn the 720×1280 panel into a 1280×720 desktop.
+4. Select Apply, then OK.
+
+Control Centre stores that as a kanshi profile for labwc, in `~/.config/kanshi/config`. The panel mode stays the native portrait mode. The transform is what makes the desktop landscape:
+
+```
+profile {
+    output DSI-1 enable mode 720x1280@60 position 0,0 transform 90
+}
+```
+
+`transform 90` matches Left. `transform 270` matches Right. To try a rotation without rebooting, from a terminal on the desktop:
+
+```bash
+wlr-randr --output DSI-1 --transform 90
+```
+
+A console-only rotate in `/boot/firmware/cmdline.txt` (`video=DSI-1:720x1280@60,rotate=90`) turns the text console and does not rotate the Wayland desktop. Do not use it for this UI.
+
+### Touch
+
+The panel's touchscreen is a libinput device, typically a Goodix capacitive touchscreen. On the desktop it is mapped to the DSI output, and labwc transforms touch coordinates with that output. After you rotate the screen, a finger lines up with the landscape picture.
+
+If a touch lands in the portrait position after the picture has rotated, bind the touch device to the same output. In Control Centre, Screens, right-click the display and set Touchscreen to the Touch Display 2 device, then Apply. That writes a labwc entry in `~/.config/labwc/rc.xml`:
+
+```xml
+<touch deviceName="10-005d Goodix Capacitive TouchScreen" mapToOutput="DSI-1" mouseEmulation="yes"/>
+```
+
+The `deviceName` on your Pi may differ. Use the name Control Centre offers. `libinput list-devices` shows it too.
+
+The desk receives those events as ordinary mouse clicks. An on-screen preset is `source: "touch"`. The arcade buttons stay on GPIO and send `source: "button"`.
+
+The `invx`, `invy`, and `swapxy` options on `dtoverlay=vc4-kms-dsi-ili9881-7inch` are only for touch when there is no desktop. Leave them unset when labwc is rotating the output. Setting both rotates the finger twice.
 
 If the systemd service cannot see the desktop, copy `deploy/desk-assistant.desktop` into `~/.config/autostart/` (replace `__INSTALL_DIR__`) so it starts inside the graphical session. Do not also leave the service running, or you will have two copies. The second one exits only if you stop the service.
 
@@ -222,6 +293,8 @@ If the systemd service cannot see the desktop, copy `deploy/desk-assistant.deskt
 | `DESK_FULLSCREEN` | `ui.fullscreen` (`1`, `true`, `yes`) |
 | `DESK_STATE_DIR` | where the generated topic is stored |
 | `DESK_INPUT` | `input_backend` (`auto`, `gpio`, `keyboard`) |
+
+`audio.input_match` and `audio.output_match` select the PowerConf by name. There is no environment override for them.
 
 `speak_notifications: true` also speaks idle notifications. The default is to show them only.
 
@@ -266,9 +339,11 @@ tests/
 | "The webhook key was rejected" | 401. The key in `config.yaml` or `DESK_WEBHOOK_KEY` does not match |
 | "Couldn't reach the assistant" | URL, DNS, and that the Pi is online. `--check` prints the URL |
 | Thinking, then "No reply arrived" | The routine accepted the POST but nothing was published to `reply_topic`. `--check` prints the topic |
-| Buttons do nothing physical | `gpioinfo` or group `gpio`. Reboot after `install.sh`. A HAT using BCM 17, 27, 22, or 23 will collide |
-| No speech | `espeak-ng` installed, volume up, and `paplay` can play a wav. Pi 5 needs USB or HDMI audio |
-| No transcript | `install.sh --with-vosk`, or set `stt.whisper_*`. `arecord -l` for the mic |
+| Buttons do nothing physical | `gpioinfo` or group `gpio`. Reboot after `install.sh`. A HAT using BCM 17, 27, 22, or 23 will collide. The display power cable should stay on pins 2 and 6 |
+| LEDs stay dark | 5 V and GND on the LED legs, with the series resistor. The program does not switch the LEDs |
+| No speech | `espeak-ng` installed, PowerConf volume up, and `--check` shows an output device that matched `PowerConf`. `paplay` has to be able to play a wav on that sink |
+| No transcript | `install.sh --with-vosk`, or set `stt.whisper_*`. `--check` shows the capture device. `arecord -l` should list `PowerConf` |
+| Touch is offset after rotation | Map the touchscreen to the DSI output in Control Centre. Do not also set `swapxy` on the display overlay |
 | Blank screen from the service | `journalctl -u desk-assistant`. Autologin must be on, or set `ui.driver: kmsdrm` and stop the desktop |
 
 ## Haro
@@ -319,7 +394,7 @@ sudo raspi-config nonint do_spi 0
 sudo reboot
 ```
 
-`arecord -l` and `aplay -l` should then show a card named `seeed2micvoicec`. The sample config points both the microphone and the speaker at `plughw:CARD=seeed2micvoicec,DEV=0`. The onboard button is GPIO17 and is active-low. The LEDs are the three APA102s on SPI bus 0, device 1 (`/dev/spidev0.1`), which is why SPI has to be on.
+`arecord -l` and `aplay -l` should then show a card named `seeed2micvoicec`. The sample config points both the microphone and the speaker at `plughw:CARD=seeed2micvoicec,DEV=0`. Those exact `audio.device` and `audio.output_device` values win over the desk's `PowerConf` name match. The onboard button is GPIO17 and is active-low. The LEDs are the three APA102s on SPI bus 0, device 1 (`/dev/spidev0.1`), which is why SPI has to be on.
 
 An older v1 HAT can stay silent with that overlay. In that case use HinTak's `seeed-voicecard` branch that matches `uname -r` (for a 6.12 kernel, `git clone -b v6.12 https://github.com/HinTak/seeed-voicecard`) and run its `install.sh`. Do not mix that DKMS driver with the v2 overlay.
 
