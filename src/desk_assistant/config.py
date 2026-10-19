@@ -78,6 +78,25 @@ class AudioSettings:
     # Optional exact arecord device, such as "plughw:CARD=PowerConf,DEV=0".
     # When set, this wins over input_match.
     device: str = ""
+    # Optional exact playback device for aplay (-D) or paplay (--device).
+    # When set, this wins over output_match. Haro sets this to the ReSpeaker card.
+    output_device: str = ""
+
+
+@dataclass
+class HaroSettings:
+    """Screenless voice build. Ignored by the desk variant."""
+
+    button_gpio: int = 17
+    led_count: int = 3
+    spi_bus: int = 0
+    spi_device: int = 1
+    battery: bool = True
+    battery_low_percent: float = 20.0
+    battery_interval_seconds: float = 60.0
+    pisugar_socket: str = "/tmp/pisugar-server.sock"
+    pisugar_host: str = "127.0.0.1"
+    pisugar_port: int = 8423
 
 
 @dataclass
@@ -99,6 +118,7 @@ class Config:
     tts: TtsSettings = field(default_factory=TtsSettings)
     audio: AudioSettings = field(default_factory=AudioSettings)
     ui: UiSettings = field(default_factory=UiSettings)
+    haro: HaroSettings = field(default_factory=HaroSettings)
     reply_timeout_seconds: float = 180.0
     speak_notifications: bool = False
     input_backend: str = "auto"
@@ -186,6 +206,7 @@ def load_config(
         tts=_tts(raw.get("tts") or {}),
         audio=_audio(raw.get("audio") or {}),
         ui=_ui(raw.get("ui") or {}),
+        haro=_haro(raw.get("haro") or {}),
         reply_timeout_seconds=_as_float(raw.get("reply_timeout_seconds"), 180.0),
         speak_notifications=_as_bool(raw.get("speak_notifications"), False),
         input_backend=_as_str(raw.get("input_backend"), "auto") or "auto",
@@ -354,6 +375,23 @@ def _audio(raw: dict) -> AudioSettings:
         input_match=_as_str(raw.get("input_match"), "PowerConf"),
         output_match=_as_str(raw.get("output_match"), "PowerConf"),
         device=_as_str(raw.get("device")),
+        output_device=_as_str(raw.get("output_device")),
+    )
+
+
+def _haro(raw: dict) -> HaroSettings:
+    return HaroSettings(
+        button_gpio=int(_as_float(raw.get("button_gpio"), 17)),
+        led_count=int(_as_float(raw.get("led_count"), 3)),
+        spi_bus=int(_as_float(raw.get("spi_bus"), 0)),
+        spi_device=int(_as_float(raw.get("spi_device"), 1)),
+        battery=_as_bool(raw.get("battery"), True),
+        battery_low_percent=_as_float(raw.get("battery_low_percent"), 20.0),
+        battery_interval_seconds=_as_float(raw.get("battery_interval_seconds"), 60.0),
+        pisugar_socket=_as_str(raw.get("pisugar_socket"), "/tmp/pisugar-server.sock")
+        or "/tmp/pisugar-server.sock",
+        pisugar_host=_as_str(raw.get("pisugar_host"), "127.0.0.1") or "127.0.0.1",
+        pisugar_port=int(_as_float(raw.get("pisugar_port"), 8423)),
     )
 
 

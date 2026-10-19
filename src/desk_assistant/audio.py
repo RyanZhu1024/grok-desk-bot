@@ -350,8 +350,8 @@ class DeviceChoice:
     """A capture or playback device chosen for this run.
 
     `device` is empty when the system default should be used. `source` is
-    `configured` (exact `audio.device`), `matched` (name substring), or
-    `default` (no match, or nothing to search).
+    `configured` (exact `audio.device` or `audio.output_device`), `matched`
+    (name substring), or `default` (no match, or nothing to search).
     """
 
     role: str
@@ -362,7 +362,8 @@ class DeviceChoice:
 
     def report(self) -> str:
         if self.source == "configured":
-            return f"Audio {self.role}: {self.device}  (set in audio.device)"
+            field = "audio.device" if self.role == "input" else "audio.output_device"
+            return f"Audio {self.role}: {self.device}  (set in {field})"
         if self.source == "matched":
             return f"Audio {self.role}: {self.device}  (matched {self.match!r}; {self.detail})"
         shown = self.detail or "using the system default"
@@ -492,6 +493,9 @@ def resolve_output_device(
     probe_note: str = "",
 ) -> DeviceChoice:
     match = config.audio.output_match.strip()
+    explicit = config.audio.output_device.strip()
+    if explicit:
+        return DeviceChoice("output", match, explicit, "set in audio.output_device", "configured")
     if player not in {"paplay", "aplay"}:
         return DeviceChoice(
             "output",

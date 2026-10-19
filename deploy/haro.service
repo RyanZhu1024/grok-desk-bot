@@ -1,0 +1,21 @@
+[Unit]
+Description=Haro voice assistant
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+SupplementaryGroups=audio gpio spi i2c
+WorkingDirectory=__INSTALL_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=__HOME__
+Environment=DESK_CONFIG=/etc/desk-assistant/config.yaml
+Environment=DESK_STATE_DIR=/var/lib/desk-assistant
+ExecStart=__INSTALL_DIR__/.venv/bin/haro
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

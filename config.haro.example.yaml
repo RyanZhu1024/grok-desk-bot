@@ -1,0 +1,51 @@
+# Haro configuration.
+# Copy to /etc/desk-assistant/config.yaml on the Pi Zero.
+# config.yaml is gitignored. Paste the webhook URL and bearer key below,
+# or set DESK_WEBHOOK_URL and DESK_WEBHOOK_KEY.
+
+webhook:
+  url: ""
+  key: ""
+  timeout_seconds: 20
+
+ntfy:
+  server: "https://ntfy.sh"
+  # Leave empty to generate a long random topic on first run.
+  topic: ""
+
+reply_timeout_seconds: 180
+
+# Hold the ReSpeaker button (GPIO17) to talk. Release sends the transcript.
+haro:
+  button_gpio: 17
+  led_count: 3
+  spi_bus: 0
+  spi_device: 1
+  battery: true
+  battery_low_percent: 20
+  battery_interval_seconds: 60
+
+stt:
+  # Vosk small English fits a Pi Zero 2 W. whisper_cpp and mock still work.
+  engine: vosk
+  vosk_model: "/var/lib/desk-assistant/models/vosk-model-small-en-us-0.15"
+  whisper_bin: "whisper-cli"
+  whisper_model: ""
+  mock_transcript: "Rune what time is it"
+
+tts:
+  # espeak-ng is the voice that keeps up on 512 MB. A small Piper model
+  # can be selected with engine: piper, but it is often too slow here.
+  engine: espeak
+  espeak_bin: "espeak-ng"
+  espeak_voice: "en-us"
+  espeak_speed: 155
+  player: aplay
+
+audio:
+  sample_rate: 16000
+  max_record_seconds: 30
+  min_record_seconds: 0.25
+  # ReSpeaker 2-Mics card name after the respeaker-2mic-v2_0 overlay.
+  device: "plughw:CARD=seeed2micvoicec,DEV=0"
+  output_device: "plughw:CARD=seeed2micvoicec,DEV=0"

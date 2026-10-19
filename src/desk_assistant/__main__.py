@@ -1,10 +1,12 @@
 """Command line entry point.
 
-    desk-assistant              run on the Pi
+    desk-assistant              run the desk on the Pi
+    desk-assistant --variant haro
+                                run the screenless Haro build
     desk-assistant --check      print the resolved config
-    desk-assistant --test       laptop UI with a mock webhook
-    desk-assistant --test --script
-                                drive the mock webhook and exit
+    desk-assistant --test       laptop test mode
+    desk-assistant --variant haro --test
+                                Haro on a laptop: space toggles the mic
 """
 
 from __future__ import annotations
@@ -20,6 +22,12 @@ from desk_assistant.runtime import format_check, run_production, run_test_mode
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="desk-assistant", description="Desk assistant for a Raspberry Pi.")
     parser.add_argument("--config", help="Path to config.yaml. Defaults to the usual search path.")
+    parser.add_argument(
+        "--variant",
+        choices=("desk", "haro"),
+        default="desk",
+        help="desk is the touchscreen build. haro is the screenless voice build.",
+    )
     parser.add_argument("--check", action="store_true", help="Print the resolved config and exit.")
     parser.add_argument(
         "--test",
@@ -45,6 +53,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.script and not args.test:
         parser.error("--script is only used with --test")
+
+    if args.variant == "haro":
+        from desk_assistant.haro_runtime import format_haro_check, run_haro_production, run_haro_test
+
+        if args.test:
+            return run_haro_test(script=args.script)
+        config = load_config(args.config)
+        if args.check:
+            print(format_haro_check(config))
+            if not config.webhook.url or not config.webhook.key:
+                print("\nWebhook URL and key are not set.")
+            return 0
+        return run_haro_production(config)
 
     if args.test:
         return run_test_mode(

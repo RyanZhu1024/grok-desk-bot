@@ -4,6 +4,8 @@ A small push-to-talk desk assistant for a Raspberry Pi 5. Four LED arcade button
 
 The same program runs on a laptop. Keyboard keys stand in for the GPIO buttons, and `--test` answers with a local mock of the webhook so nothing leaves the machine.
 
+A second build, [Haro](#haro), is screenless. It runs on a Raspberry Pi Zero 2 W inside a small round shell and uses the same webhook and ntfy path.
+
 ## How a request moves
 
 ```
@@ -217,7 +219,7 @@ Both speech-to-text and text-to-speech are chosen in config. `auto` uses the fir
 
 Playback prefers `paplay` (PipeWire / Pulse), then `aplay`, then `ffplay`. The microphone and the speaker are the same Anker PowerConf S330. `audio.input_match` and `audio.output_match` default to `PowerConf`. On startup the program looks for a capture device and a playback device whose name contains that text.
 
-Capture is chosen from `arecord -l`. A card named `PowerConf` becomes `plughw:CARD=PowerConf,DEV=0`. Playback through `paplay` is chosen from `pactl list short sinks` (a sink name such as `alsa_output.usb-Anker_PowerConf_S330-00.analog-stereo`). Playback through `aplay` uses the same card name from `aplay -l`. If nothing matches, or the match is empty, that direction uses the system default device. `audio.device` is an optional exact arecord string and wins over `input_match`.
+Capture is chosen from `arecord -l`. A card named `PowerConf` becomes `plughw:CARD=PowerConf,DEV=0`. Playback through `paplay` is chosen from `pactl list short sinks` (a sink name such as `alsa_output.usb-Anker_PowerConf_S330-00.analog-stereo`). Playback through `aplay` uses the same card name from `aplay -l`. If nothing matches, or the match is empty, that direction uses the system default device. `audio.device` is an optional exact arecord string and wins over `input_match`. `audio.output_device` is the same for playback and wins over `output_match`.
 
 `desk-assistant --check` prints the input and output it actually selected, including when it fell back to the default.
 
@@ -302,25 +304,30 @@ If the systemd service cannot see the desktop, copy `deploy/desk-assistant.deskt
 pytest
 ```
 
-`tests/test_webhook.py` covers the bearer header, the JSON body, 200, 400, 401, other HTTP errors, and network failures. `tests/test_ntfy.py` covers the JSON and SSE parser and a live subscribe / drop / resume against the mock server. `tests/test_e2e.py` runs the desk against that server: button, touch, voice, disabled routine, bad key, notification, timeout, and the scripted laptop UI.
+`tests/test_webhook.py` covers the bearer header, the JSON body, 200, 400, 401, other HTTP errors, and network failures. `tests/test_ntfy.py` covers the JSON and SSE parser and a live subscribe / drop / resume against the mock server. `tests/test_e2e.py` runs the desk against that server: button, touch, voice, disabled routine, bad key, notification, timeout, and the scripted laptop UI. `tests/test_haro.py` covers the Haro target field, the acknowledgement plus reply, the console eyes, and the low-battery warning.
 
 ## Layout
 
 ```
-config.example.yaml          committed template
-install.sh                   Pi installer, enables systemd
+config.example.yaml          desk template
+config.haro.example.yaml     Haro template
+install.sh                   Pi installer (--haro for the voice build)
 deploy/desk-assistant.service
+deploy/haro.service          screenless Haro service
 deploy/run.sh                waits for Wayland, X11, or kmsdrm
 deploy/desk-assistant.desktop
 src/desk_assistant/
-  app.py                     idle / listen / think / speak state machine
+  app.py                     desk idle / listen / think / speak state machine
+  haro.py                    screenless hold-to-talk loop
+  eyes.py                    APA102 eyes, or a console stand-in
+  battery.py                 PiSugar 3 level, when the server is running
   webhook.py                 HTTPS client
   ntfy.py                    JSON-stream subscriber
   audio.py                   arecord, Vosk, whisper.cpp, Piper, espeak-ng
   gpio_input.py              arcade buttons via gpiozero
-  ui.py                      fullscreen status screen
+  ui.py                      fullscreen status screen (desk only)
   mock_server.py             webhook + ntfy stand-in for --test
-  runtime.py                 wires a run, including the laptop demo
+  runtime.py                 wires a desk run, including the laptop demo
 tests/
 ```
 
@@ -338,6 +345,93 @@ tests/
 | No transcript | `install.sh --with-vosk`, or set `stt.whisper_*`. `--check` shows the capture device. `arecord -l` should list `PowerConf` |
 | Touch is offset after rotation | Map the touchscreen to the DSI output in Control Centre. Do not also set `swapxy` on the display overlay |
 | Blank screen from the service | `journalctl -u desk-assistant`. Autologin must be on, or set `ui.driver: kmsdrm` and stop the desktop |
+
+## Haro
+
+Haro is a voice-only build for a Raspberry Pi Zero 2 W (512 MB) inside a small round shell. There is no screen. Hold the button to talk and release to send. The POST uses the same webhook as the desk, with `source` set to `haro` and a `target` field:
+
+```json
+{"text": "Rune what time is it", "source": "haro", "reply_topic": "desk-…", "target": "rune"}
+```
+
+A transcript that starts with **Rune** sets `target` to `rune`. One that starts with **Athelas** sets `target` to `athelas`. Anything else, including "Hey Rune", sets `target` to `ollivander`. The full transcript is still the `text` field.
+
+Replies arrive on the ntfy topic and are spoken. A short acknowledgement such as `Asking Rune…` can arrive before the real answer. Haro speaks that, keeps waiting, and speaks the answer too. The desk still treats the first ntfy message as the whole reply.
+
+### Parts
+
+| Piece | Notes |
+| --- | --- |
+| Raspberry Pi Zero 2 W, 512 MB | Raspberry Pi OS **Lite** 64-bit. No desktop |
+| ReSpeaker 2-Mics Pi HAT | Microphones, speaker amplifier, user button on GPIO17, 3 APA102 RGB LEDs |
+| Small speaker | Plugged into the HAT's speaker output |
+| PiSugar 3 | Battery power for the Zero. The level is read if PiSugar Power Manager is running |
+| Round shell, about 10–12 cm inside | The stack has to fit with air around the speaker and the mics |
+
+### Speech on a Zero
+
+Speech-to-text defaults to the Vosk small English model. That is the engine that fits in 512 MB. `stt.engine` is still pluggable (`vosk`, `whisper_cpp`, or `mock`). Speech output defaults to espeak-ng through `aplay` on the ReSpeaker card. A Piper voice can be selected in config, but even a small one is often too slow on this board and can push it out of memory. Stay with espeak-ng unless you have measured a tiny voice and can accept the pause.
+
+### Eyes and battery
+
+The three APA102s are the eyes. They are dim at idle, green while listening, pulsing while thinking, bright while speaking, and red on an error. The program does not open a window. On a laptop, `--test` prints the same moods as `[haro] eyes: …`.
+
+If PiSugar Power Manager is running, Haro asks it for `get battery` on `/tmp/pisugar-server.sock`, then on `127.0.0.1:8423`. At or below 20% it says "Battery is low." once, and again only after the level has climbed back above that line. If the server is not installed, Haro skips the warning.
+
+### ReSpeaker on current Raspberry Pi OS Lite 64-bit
+
+Current Lite images (kernel 6.1 and later, including 6.12) already ship the WM8960 codec driver. The old `seeed-voicecard` DKMS build often fails on these kernels. Use Seeed's overlay instead. This is the v2 board. `/boot/firmware/config.txt` is the file both Lite and desktop images use now.
+
+```bash
+sudo apt update
+sudo apt install -y git device-tree-compiler
+git clone https://github.com/Seeed-Studio/seeed-linux-dtoverlays.git
+cd seeed-linux-dtoverlays/overlays/rpi
+dtc -I dts -O dtb -o respeaker-2mic-v2_0.dtbo respeaker-2mic-v2_0-overlay.dts
+sudo cp respeaker-2mic-v2_0.dtbo /boot/firmware/overlays/
+echo "dtoverlay=respeaker-2mic-v2_0" | sudo tee -a /boot/firmware/config.txt
+sudo raspi-config nonint do_spi 0
+sudo reboot
+```
+
+`arecord -l` and `aplay -l` should then show a card named `seeed2micvoicec`. The sample config points both the microphone and the speaker at `plughw:CARD=seeed2micvoicec,DEV=0`. Those exact `audio.device` and `audio.output_device` values win over the desk's `PowerConf` name match. The onboard button is GPIO17 and is active-low. The LEDs are the three APA102s on SPI bus 0, device 1 (`/dev/spidev0.1`), which is why SPI has to be on.
+
+An older v1 HAT can stay silent with that overlay. In that case use HinTak's `seeed-voicecard` branch that matches `uname -r` (for a 6.12 kernel, `git clone -b v6.12 https://github.com/HinTak/seeed-voicecard`) and run its `install.sh`. Do not mix that DKMS driver with the v2 overlay.
+
+Install PiSugar Power Manager from the PiSugar 3 docs so `pisugar-server` is running. Haro only needs the `get battery` command.
+
+Then:
+
+```bash
+./install.sh --haro
+```
+
+That installs Vosk's small English model, skips the desk UI packages, enables `haro.service`, and turns SPI on in `config.txt` if it is not already. `haro --check` prints the topic, the audio devices, the button, the LEDs, and the battery percent when the power manager answers.
+
+### Fitting a 10–12 cm shell
+
+The Zero 2 W is 65 × 30 mm. PiSugar 3 sits under it. The ReSpeaker HAT plugs onto the 40-pin header. Center that stack. It is a few centimetres tall, which fits a 10 cm sphere if nothing else is stacked on the HAT and the speaker sits beside it rather than on top.
+
+- Point the two mics at two small holes. Do not cover them.
+- Point the speaker cone at a ring of holes. Leave air behind the cone. Do not press it against the battery.
+- The APA102s are the eyes. A clear window or a short light pipe is enough. They are not wired out to a separate board.
+- The HAT button is hard to reach once the shell is closed. Leave a finger hole over it, or wire another momentary button in parallel from GPIO17 to ground. Hold still means talk, and release still means send.
+- Cut a slot for the PiSugar charge port.
+- SPI (eyes), I2C (PiSugar), and I2S (audio) are separate buses. They can all be enabled. This build does not use a display.
+
+### Laptop test
+
+```bash
+python -m desk_assistant --variant haro --test
+```
+
+Press space to start talking and space again to send. A terminal cannot see a key release, so this toggles the microphone. The Pi button is still hold-to-release. `q` quits. Eye states print on the console. The scripted check the tests run is:
+
+```bash
+python -m desk_assistant --variant haro --test --script
+```
+
+`haro` is the same entry point as `--variant haro`.
 
 ## Limits of this version
 

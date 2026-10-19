@@ -116,6 +116,16 @@ def test_output_match_uses_the_paplay_sink_name():
     assert other_player.source == "default"
 
 
+def test_explicit_output_device_wins_over_the_match():
+    config = Config()
+    config.audio.output_device = "plughw:CARD=seeed2micvoicec,DEV=0"
+    config.audio.output_match = "PowerConf"
+    chosen = resolve_output_device(config, "aplay", candidates=parse_pactl_short(PACTL_SINKS))
+    assert chosen.source == "configured"
+    assert chosen.device == "plughw:CARD=seeed2micvoicec,DEV=0"
+    assert "audio.output_device" in chosen.report()
+
+
 def test_player_argv_passes_the_selected_device():
     assert player_argv("paplay", "a.wav", SINK) == ["paplay", "--device", SINK, "a.wav"]
     assert player_argv("aplay", "a.wav", POWERCONF) == ["aplay", "-q", "-D", POWERCONF, "a.wav"]
