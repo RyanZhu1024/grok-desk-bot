@@ -115,6 +115,12 @@ if ! "${INSTALL_DIR}/.venv/bin/pip" install "${PIP_SPEC}"; then
   "${INSTALL_DIR}/.venv/bin/pip" install --no-deps "${INSTALL_DIR}"
 fi
 
+if [[ "${VARIANT}" == "haro" ]]; then
+  if ! "${INSTALL_DIR}/.venv/bin/pip" install "rpi_ws281x>=5"; then
+    echo "rpi_ws281x was not installed. WS2812 eyes stay off until it is." >&2
+  fi
+fi
+
 if [[ "${WITH_VOSK}" -eq 1 ]]; then
   "${INSTALL_DIR}/.venv/bin/pip" install "vosk>=0.3.45"
   if [[ ! -d "${MODEL_DIR}/vosk-model-small-en-us-0.15" ]]; then

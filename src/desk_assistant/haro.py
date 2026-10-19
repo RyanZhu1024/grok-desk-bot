@@ -22,6 +22,7 @@ from desk_assistant.eyes import (
     MOOD_PULSING,
     MOOD_RED,
 )
+from desk_assistant.glow import DEFAULT_MOOD, split_reply
 from desk_assistant.models import NtfyMessage, State, WebhookResult
 from desk_assistant.ntfy import NtfyListener
 from desk_assistant.webhook import WebhookClient
@@ -106,6 +107,7 @@ class Haro:
         self.last_request = ""
         self.last_target = ""
         self.last_reply = ""
+        self.color_mood = DEFAULT_MOOD
         self.battery_percent: float | None = None
         self.request_log: list[tuple[str, str]] = []
         self.reply_log: list[str] = []
@@ -155,8 +157,12 @@ class Haro:
                 break
         self._check_timers()
         self._maybe_battery()
-        if self.state is State.THINKING:
-            self.eyes.pulse(time.monotonic())
+        now = time.monotonic()
+        render = getattr(self.eyes, "render", None)
+        if render is not None:
+            render(now, amplitude=self._playback_level())
+        elif self.state is State.THINKING:
+            self.eyes.pulse(now)
 
     def _enqueue_ntfy(self, message: NtfyMessage) -> None:
         self._events.put(_Event("ntfy", message=message))
@@ -280,17 +286,36 @@ class Haro:
         text = message.text
         if not text or not self._awaiting_final:
             return
-        if is_acknowledgement(text):
-            self.ack_log.append(text)
-            logger.info("Acknowledgement arrived (%d chars)", len(text))
-            self._enqueue_speech(text, State.THINKING)
+        mood, spoken = split_reply(text)
+        if mood:
+            self.color_mood = mood
+        if not spoken:
+            self._finish_reply("")
             return
+        if is_acknowledgement(spoken):
+            self.ack_log.append(spoken)
+            logger.info("Acknowledgement arrived (%d chars)", len(spoken))
+            self._apply_eyes()
+            self._enqueue_speech(spoken, State.THINKING)
+            return
+        self._finish_reply(spoken)
+
+    def _finish_reply(self, spoken: str) -> None:
         self._awaiting_final = False
         self._reply_deadline = None
-        self.last_reply = text
-        self.reply_log.append(text)
-        logger.info("Reply arrived (%d chars)", len(text))
-        self._enqueue_speech(text, State.IDLE)
+        self.last_reply = spoken
+        if spoken:
+            self.reply_log.append(spoken)
+        logger.info("Reply arrived (%d chars)", len(spoken))
+        flasher = getattr(self.eyes, "flash_reply", None)
+        if flasher is not None:
+            flasher()
+        if spoken:
+            self._enqueue_speech(spoken, State.IDLE)
+            return
+        self.state = State.IDLE
+        self.substatus = "Ready"
+        self._apply_eyes()
 
     def _enqueue_speech(self, text: str, after: State) -> None:
         self._speech.append((text, after))
@@ -392,8 +417,9 @@ class Haro:
             if not self._battery_warned:
                 self._battery_warned = True
                 self._enqueue_speech("Battery is low.", State.IDLE)
-        else:
+        elif self._battery_warned:
             self._battery_warned = False
+            self._apply_eyes()
 
     def _enter_error(self, message: str) -> None:
         self.state = State.ERROR
@@ -404,6 +430,34 @@ class Haro:
 
     def _apply_eyes(self) -> None:
         self.eyes.set_mood(_MOOD[self.state])
+        setter = getattr(self.eyes, "set_glow", None)
+        if setter is not None:
+            setter(self._glow_state_name(), self.color_mood)
+
+    def _glow_state_name(self) -> str:
+        if self.state is State.ERROR:
+            return "error"
+        if self.state is State.SPEAKING:
+            return "speaking"
+        if self.state in {State.LISTENING, State.TRANSCRIBING}:
+            return "listening"
+        if self.state is State.THINKING:
+            return "thinking"
+        if self._battery_warned:
+            return "low-battery"
+        return "idle"
+
+    def _playback_level(self) -> float | None:
+        if self.state is not State.SPEAKING:
+            return None
+        reader = getattr(self.tts, "playback_level", None)
+        if reader is None:
+            return None
+        try:
+            return reader()
+        except Exception:
+            logger.debug("playback level failed", exc_info=True)
+            return None
 
     def _run(self, target, *args) -> None:
         if self.synchronous:

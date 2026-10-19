@@ -13,6 +13,7 @@ dependencies = [
 desk = ["pygame>=2.5,<3"]
 dev = ["pytest>=8,<9", "pygame>=2.5,<3"]
 pi = ["vosk>=0.3.45"]
+lights = ["rpi_ws281x>=5"]
 
 [project.scripts]
 desk-assistant = "desk_assistant.__main__:main"

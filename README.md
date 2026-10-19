@@ -304,7 +304,7 @@ If the systemd service cannot see the desktop, copy `deploy/desk-assistant.deskt
 pytest
 ```
 
-`tests/test_webhook.py` covers the bearer header, the JSON body, 200, 400, 401, other HTTP errors, and network failures. `tests/test_ntfy.py` covers the JSON and SSE parser and a live subscribe / drop / resume against the mock server. `tests/test_e2e.py` runs the desk against that server: button, touch, voice, disabled routine, bad key, notification, timeout, and the scripted laptop UI. `tests/test_haro.py` covers the Haro target field, the acknowledgement plus reply, the console eyes, and the low-battery warning.
+`tests/test_webhook.py` covers the bearer header, the JSON body, 200, 400, 401, other HTTP errors, and network failures. `tests/test_ntfy.py` covers the JSON and SSE parser and a live subscribe / drop / resume against the mock server. `tests/test_e2e.py` runs the desk against that server: button, touch, voice, disabled routine, bad key, notification, timeout, and the scripted laptop UI. `tests/test_haro.py` covers the Haro target field, the acknowledgement plus reply, the console eyes, and the low-battery warning. `tests/test_glow.py` covers the eye animations and the mood tag.
 
 ## Layout
 
@@ -319,7 +319,8 @@ deploy/desk-assistant.desktop
 src/desk_assistant/
   app.py                     desk idle / listen / think / speak state machine
   haro.py                    screenless hold-to-talk loop
-  eyes.py                    APA102 eyes, or a console stand-in
+  glow.py                    eye animation frames and the mood tag
+  eyes.py                    HAT APA102s, shell eyes, or a console stand-in
   battery.py                 PiSugar 3 level, when the server is running
   webhook.py                 HTTPS client
   ntfy.py                    JSON-stream subscriber
@@ -364,6 +365,7 @@ Replies arrive on the ntfy topic and are spoken. A short acknowledgement such as
 | --- | --- |
 | Raspberry Pi Zero 2 W, 512 MB | Raspberry Pi OS **Lite** 64-bit. No desktop |
 | ReSpeaker 2-Mics Pi HAT | Microphones, speaker amplifier, user button on GPIO17, 3 APA102 RGB LEDs |
+| Two addressable RGB LEDs | Behind the shell eyes. WS2812B on GPIO12, or APA102s chained after the HAT |
 | Small speaker | Plugged into the HAT's speaker output |
 | PiSugar 3 | Battery power for the Zero. The level is read if PiSugar Power Manager is running |
 | Round shell, about 10–12 cm inside | The stack has to fit with air around the speaker and the mics |
@@ -374,9 +376,38 @@ Speech-to-text defaults to the Vosk small English model. That is the engine that
 
 ### Eyes and battery
 
-The three APA102s are the eyes. They are dim at idle, green while listening, pulsing while thinking, bright while speaking, and red on an error. The program does not open a window. On a laptop, `--test` prints the same moods as `[haro] eyes: …`.
+The three APA102s on the HAT mirror the voice state: dim at idle, green while listening, pulsing while thinking, bright while speaking, and red on an error. Two more LEDs sit behind the shell and play the glow animations below. The program does not open a window. On a laptop, `--test` prints the HAT as `[haro] eyes: …` and the shell eyes as `[haro] glow: …`.
 
-If PiSugar Power Manager is running, Haro asks it for `get battery` on `/tmp/pisugar-server.sock`, then on `127.0.0.1:8423`. At or below 20% it says "Battery is low." once, and again only after the level has climbed back above that line. If the server is not installed, Haro skips the warning.
+`eye_type` chooses the shell LEDs. `ws2812` (the default) is a pair of WS2812B pixels. Data goes to `eye_pin`, GPIO12 (physical pin 32), with 5V and a common ground. `./install.sh --haro` installs `rpi_ws281x`, which drives that pin with hardware PWM so a Pi Zero 2 W does not bit-bang the timing. GPIO13 uses PWM channel 1 if you move the wire. The HAT already uses SPI0 for its own APA102s, so the WS2812 data stays off that bus. `apa102` instead chains the two eye pixels after the HAT LEDs on the same SPI device: clock shared, data out of the last onboard LED into the first external LED. They are pixels 4 and 5, and `eye_pin` is ignored. `eye_brightness` scales the shell LEDs from 0 to 1.
+
+| Glow state | What the two eyes do |
+| --- | --- |
+| idle | Dim slow breathe in the current mood |
+| listening | Steady soft pulse |
+| thinking | Slow alternate between the two eyes |
+| speaking | Flicker that follows the TTS wav loudness, or a rhythm if no wav is playing |
+| reply-arrived | Quick double flash when the real reply arrives |
+| error | Steady red |
+| low-battery | Amber blink while idle after a low-battery warning |
+
+The assistant can tint those colors (except error and low-battery) by starting the ntfy reply with a mood tag on its own line. Haro strips that line, then speaks the rest:
+
+```text
+[mood:happy]
+The lab is quiet.
+```
+
+| Tag | Color |
+| --- | --- |
+| `happy` | Slytherin emerald. This is the default until a tag arrives |
+| `calm` | Teal |
+| `unsure` | Amber |
+| `excited` | Bright white-green |
+| `sad` | Dim blue |
+
+A tag Haro does not know is still removed, and the previous mood stays. The same tag may also be a prefix of a one-line reply: `[mood:calm] The lab is quiet.`
+
+If PiSugar Power Manager is running, Haro asks it for `get battery` on `/tmp/pisugar-server.sock`, then on `127.0.0.1:8423`. At or below 20% it says "Battery is low." once, blinks the shell eyes amber while idle, and warns again only after the level has climbed back above that line. If the server is not installed, Haro skips the warning.
 
 ### ReSpeaker on current Raspberry Pi OS Lite 64-bit
 
@@ -406,7 +437,7 @@ Then:
 ./install.sh --haro
 ```
 
-That installs Vosk's small English model, skips the desk UI packages, enables `haro.service`, and turns SPI on in `config.txt` if it is not already. `haro --check` prints the topic, the audio devices, the button, the LEDs, and the battery percent when the power manager answers.
+That installs Vosk's small English model, skips the desk UI packages, installs `rpi_ws281x` for the WS2812 eyes, enables `haro.service`, and turns SPI on in `config.txt` if it is not already. `haro --check` prints the topic, the audio devices, the button, the HAT LEDs, the shell eyes, and the battery percent when the power manager answers. PWM on GPIO12 needs access to the PWM hardware. If the log says the WS2812 eyes are unavailable, the voice loop still runs and the HAT LEDs still mirror the state.
 
 ### Fitting a 10–12 cm shell
 
@@ -414,10 +445,10 @@ The Zero 2 W is 65 × 30 mm. PiSugar 3 sits under it. The ReSpeaker HAT plugs on
 
 - Point the two mics at two small holes. Do not cover them.
 - Point the speaker cone at a ring of holes. Leave air behind the cone. Do not press it against the battery.
-- The APA102s are the eyes. A clear window or a short light pipe is enough. They are not wired out to a separate board.
+- Put the two shell LEDs behind a clear window or a short light pipe, one per eye. The HAT APA102s stay on the board and only mirror the state.
 - The HAT button is hard to reach once the shell is closed. Leave a finger hole over it, or wire another momentary button in parallel from GPIO17 to ground. Hold still means talk, and release still means send.
 - Cut a slot for the PiSugar charge port.
-- SPI (eyes), I2C (PiSugar), and I2S (audio) are separate buses. They can all be enabled. This build does not use a display.
+- SPI (HAT LEDs), PWM on GPIO12 (WS2812 eyes), I2C (PiSugar), and I2S (audio) are separate. They can all be enabled. This build does not use a display.
 
 ### Laptop test
 
@@ -425,7 +456,7 @@ The Zero 2 W is 65 × 30 mm. PiSugar 3 sits under it. The ReSpeaker HAT plugs on
 python -m desk_assistant --variant haro --test
 ```
 
-Press space to start talking and space again to send. A terminal cannot see a key release, so this toggles the microphone. The Pi button is still hold-to-release. `q` quits. Eye states print on the console. The scripted check the tests run is:
+Press space to start talking and space again to send. A terminal cannot see a key release, so this toggles the microphone. The Pi button is still hold-to-release. `q` quits. The console prints `[haro] eyes:` for the HAT and `[haro] glow:` for the shell eyes, including the mood tint. The scripted check the tests run is:
 
 ```bash
 python -m desk_assistant --variant haro --test --script
