@@ -8,13 +8,16 @@ actually installed.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,14 +231,20 @@ class _SubprocessTTS:
         self.output_device = output_device
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._envelope: list[float] = []
+        self._play_started = 0.0
+        self._hop = 0.05
 
     def speak(self, text: str) -> None:
         handle, name = tempfile.mkstemp(suffix=".wav", prefix="desk-tts-")
         os.close(handle)
         try:
             self.synthesize(text, name)
+            envelope = wav_amplitude_envelope(name, hop_seconds=self._hop)
             command = player_argv(self.player, name, self.output_device)
             with self._lock:
+                self._envelope = envelope
+                self._play_started = time.monotonic()
                 self._proc = subprocess.Popen(
                     command,
                     stdout=subprocess.DEVNULL,
@@ -250,6 +259,26 @@ class _SubprocessTTS:
                 os.unlink(name)
             except OSError:
                 pass
+
+    def playback_level(self) -> float | None:
+        """0..1 loudness of the wav that is playing, or None when idle.
+
+        The envelope is relative to the loudest hop in this utterance, so
+        the eyes flicker with the phrase instead of with the speaker volume.
+        """
+        with self._lock:
+            proc = self._proc
+            started = self._play_started
+            envelope = self._envelope
+            hop = self._hop
+        if proc is None or not envelope:
+            return None
+        index = int((time.monotonic() - started) / hop)
+        if index < 0:
+            index = 0
+        if index >= len(envelope):
+            index = len(envelope) - 1
+        return envelope[index]
 
     def stop(self) -> None:
         with self._lock:
@@ -311,6 +340,51 @@ def write_silence_wav(seconds: float, sample_rate: int = 16000) -> Path:
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(b"\x00\x00" * frames)
     return Path(name)
+
+
+def wav_amplitude_envelope(path: str, hop_seconds: float = 0.05) -> list[float]:
+    """RMS of each hop in a wav, scaled so the loudest hop is 1."""
+    try:
+        with wave.open(path, "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            width = wav_file.getsampwidth()
+            rate = wav_file.getframerate()
+            raw = wav_file.readframes(wav_file.getnframes())
+    except (wave.Error, OSError, EOFError):
+        return []
+    if width not in {1, 2} or rate <= 0 or channels <= 0 or not raw:
+        return []
+    samples = _pcm_samples(raw, width, channels)
+    if not samples:
+        return []
+    hop = max(1, int(rate * hop_seconds))
+    envelope: list[float] = []
+    for start in range(0, len(samples), hop):
+        window = samples[start : start + hop]
+        if not window:
+            break
+        mean_sq = sum(value * value for value in window) / len(window)
+        envelope.append(math.sqrt(mean_sq))
+    peak = max(envelope) if envelope else 0.0
+    if peak <= 1e-6:
+        return [0.0] * len(envelope)
+    return [min(1.0, value / peak) for value in envelope]
+
+
+def _pcm_samples(raw: bytes, width: int, channels: int) -> list[float]:
+    if width == 1:
+        values = [(byte - 128) / 128.0 for byte in raw]
+    else:
+        count = len(raw) // 2
+        unpacked = struct.unpack("<" + "h" * count, raw[: count * 2])
+        values = [sample / 32768.0 for sample in unpacked]
+    if channels <= 1:
+        return values
+    mixed: list[float] = []
+    for index in range(0, len(values) - channels + 1, channels):
+        window = values[index : index + channels]
+        mixed.append(sum(window) / channels)
+    return mixed
 
 
 def detect_player() -> str | None:

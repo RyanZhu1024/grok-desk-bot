@@ -24,6 +24,13 @@ haro:
   battery: true
   battery_low_percent: 20
   battery_interval_seconds: 60
+  # Two LEDs behind the shell eyes.
+  # ws2812 uses rpi_ws281x PWM on eye_pin (GPIO12). apa102 chains them
+  # after the HAT LEDs on the SPI bus above, and ignores eye_pin.
+  eye_type: ws2812
+  eye_pin: 12
+  eye_count: 2
+  eye_brightness: 0.45
 
 stt:
   # Vosk small English fits a Pi Zero 2 W. whisper_cpp and mock still work.

@@ -54,8 +54,8 @@ class _Levels:
         return self.levels.pop(0)
 
 
-def _haro(transcript="Rune what time is it", battery=None, **kwargs):
-    eyes = ConsoleEyes()
+def _haro(transcript="Rune what time is it", battery=None, eyes=None, **kwargs):
+    eyes = eyes or ConsoleEyes()
     webhook = _Webhook()
     listener = _Listener()
     tts = MockTTS()
@@ -227,6 +227,9 @@ def test_haro_example_config(tmp_path, monkeypatch):
     assert config.tts.engine == "espeak"
     assert config.audio.device == "plughw:CARD=seeed2micvoicec,DEV=0"
     assert config.audio.output_device == config.audio.device
+    assert config.haro.eye_type == "ws2812"
+    assert config.haro.eye_pin == 12
+    assert config.haro.eye_count == 2
 
 
 def test_check_mentions_haro_and_skips_the_screen(tmp_path, monkeypatch, capsys):
@@ -243,6 +246,8 @@ def test_check_mentions_haro_and_skips_the_screen(tmp_path, monkeypatch, capsys)
     assert "Variant: haro" in captured
     assert "Battery: disabled" in captured
     assert "BCM 17" in captured
+    assert "WS2812B" in captured
+    assert "GPIO 12" in captured
     assert "pygame" not in captured.lower()
     assert "800" not in captured
 

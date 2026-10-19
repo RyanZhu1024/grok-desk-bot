@@ -97,6 +97,12 @@ class HaroSettings:
     pisugar_socket: str = "/tmp/pisugar-server.sock"
     pisugar_host: str = "127.0.0.1"
     pisugar_port: int = 8423
+    # ws2812: two WS2812B LEDs on eye_pin, timed by rpi_ws281x PWM.
+    # apa102: the same two LEDs chained after the HAT on the SPI bus above.
+    eye_type: str = "ws2812"
+    eye_pin: int = 12
+    eye_count: int = 2
+    eye_brightness: float = 0.45
 
 
 @dataclass
@@ -392,7 +398,18 @@ def _haro(raw: dict) -> HaroSettings:
         or "/tmp/pisugar-server.sock",
         pisugar_host=_as_str(raw.get("pisugar_host"), "127.0.0.1") or "127.0.0.1",
         pisugar_port=int(_as_float(raw.get("pisugar_port"), 8423)),
+        eye_type=_eye_type(raw.get("eye_type")),
+        eye_pin=int(_as_float(raw.get("eye_pin"), 12)),
+        eye_count=max(1, int(_as_float(raw.get("eye_count"), 2))),
+        eye_brightness=min(1.0, max(0.0, _as_float(raw.get("eye_brightness"), 0.45))),
     )
+
+
+def _eye_type(value) -> str:
+    text = _as_str(value, "ws2812").strip().lower()
+    if text in {"apa102", "apa102c"}:
+        return "apa102"
+    return "ws2812"
 
 
 def _ui(raw: dict) -> UiSettings:

@@ -21,7 +21,7 @@ from desk_assistant.audio import (
 )
 from desk_assistant.battery import PiSugarBattery
 from desk_assistant.config import Config, load_config, redact_key
-from desk_assistant.eyes import Apa102Eyes, ConsoleEyes
+from desk_assistant.eyes import Apa102Eyes, ConsoleEyes, ConsoleGlow, HaroLights, Ws2812Eyes
 from desk_assistant.haro import Haro
 from desk_assistant.mock_server import MockAssistantServer
 from desk_assistant.models import State
@@ -51,11 +51,7 @@ def build_haro(
     recorder, rec_name = build_recorder(config, force_mock=test_mode)
     logger.info("Haro audio: %s, %s, %s", rec_name, stt_name, tts_name)
     if eyes is None:
-        eyes = ConsoleEyes() if test_mode else Apa102Eyes(
-            config.haro.led_count,
-            config.haro.spi_bus,
-            config.haro.spi_device,
-        )
+        eyes = _build_lights(config, test_mode=test_mode)
     if battery is None and config.haro.battery and not test_mode:
         battery = PiSugarBattery(
             config.haro.pisugar_socket,
@@ -103,6 +99,7 @@ def format_haro_check(config: Config) -> str:
             f"Eyes: {config.haro.led_count} APA102 LEDs on SPI "
             f"{config.haro.spi_bus}.{config.haro.spi_device}"
         ),
+        _describe_glow(config),
     ]
     if config.haro.battery:
         battery = PiSugarBattery(
@@ -119,6 +116,32 @@ def format_haro_check(config: Config) -> str:
         lines.append("Battery: disabled")
     del _stt, _tts
     return "\n".join(lines)
+
+
+def _describe_glow(config: Config) -> str:
+    count = config.haro.eye_count
+    if config.haro.eye_type == "apa102":
+        return (
+            f"Glow: {count} APA102 LEDs chained after the HAT on SPI "
+            f"{config.haro.spi_bus}.{config.haro.spi_device}"
+        )
+    return f"Glow: {count} WS2812B LEDs on GPIO {config.haro.eye_pin} (PWM)"
+
+
+def _build_lights(config: Config, *, test_mode: bool):
+    if test_mode:
+        return HaroLights(ConsoleEyes(), ConsoleGlow())
+    if config.haro.eye_type == "apa102":
+        chain = Apa102Eyes(
+            config.haro.led_count,
+            config.haro.spi_bus,
+            config.haro.spi_device,
+            eye_count=config.haro.eye_count,
+        )
+        return HaroLights(chain, chain, brightness=config.haro.eye_brightness)
+    hat = Apa102Eyes(config.haro.led_count, config.haro.spi_bus, config.haro.spi_device)
+    glow = Ws2812Eyes(config.haro.eye_pin, config.haro.eye_count)
+    return HaroLights(hat, glow, brightness=config.haro.eye_brightness)
 
 
 class HaroButton:
@@ -188,7 +211,7 @@ def run_haro_test(*, script: bool = False, transcript: str = "Rune what time is 
         config.tts.engine = "mock"
         config.audio.min_record_seconds = 0.05
         config.haro.battery = False
-        eyes = ConsoleEyes()
+        eyes = HaroLights(ConsoleEyes(), ConsoleGlow())
         haro = build_haro(config, test_mode=True, synchronous=True, eyes=eyes, battery=None)
         haro.start()
         try:
@@ -200,6 +223,7 @@ def run_haro_test(*, script: bool = False, transcript: str = "Rune what time is 
         print("Haro test mode. No screen.")
         print("Press space to start talking, space again to send, q to quit.")
         print("A terminal cannot see a key release, so space toggles the mic.")
+        print("HAT LEDs print as [haro] eyes: … and the shell eyes as [haro] glow: …")
         try:
             _keyboard_loop(haro)
         finally:
@@ -246,6 +270,11 @@ def _run_script(server: MockAssistantServer, haro: Haro, eyes: ConsoleEyes) -> i
             failures.append(f"eye history was {eyes.history!r}")
         if eyes.mood != "dim":
             failures.append(f"expected dim eyes when idle, saw {eyes.mood}")
+        glow_history = getattr(eyes, "glow_history", [])
+        if "reply-arrived" not in glow_history or "speaking" not in glow_history:
+            failures.append(f"glow history was {glow_history!r}")
+        if getattr(eyes, "color_mood", "") != "happy":
+            failures.append(f"expected the default happy tint, saw {getattr(eyes, 'color_mood', '')!r}")
     except Exception as exc:
         failures.append(f"{exc.__class__.__name__}: {exc}")
     finally:
