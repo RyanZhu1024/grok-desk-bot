@@ -70,13 +70,21 @@ class AudioSettings:
     sample_rate: int = 16000
     max_record_seconds: float = 30.0
     min_record_seconds: float = 0.25
+    # Substring of the capture device name. The Anker PowerConf S330
+    # enumerates as "PowerConf". Empty, or no match, uses the default mic.
+    input_match: str = "PowerConf"
+    # Substring of the playback device name. Same default and fallback.
+    output_match: str = "PowerConf"
+    # Optional exact arecord device, such as "plughw:CARD=PowerConf,DEV=0".
+    # When set, this wins over input_match.
     device: str = ""
 
 
 @dataclass
 class UiSettings:
-    width: int = 800
-    height: int = 480
+    # Touch Display 2 is 720x1280 portrait, used rotated to landscape.
+    width: int = 1280
+    height: int = 720
     fullscreen: bool = False
     driver: str = "auto"
 
@@ -100,6 +108,11 @@ class Config:
 
 
 def default_buttons() -> list[ButtonSettings]:
+    """The three presets that ship with the four-button box.
+
+    Push-to-talk is separate (BCM 17). Inbox on BCM 23 is the fourth
+    button and is enabled unless a config file replaces this list.
+    """
     return [
         ButtonSettings(
             id="briefing",
@@ -338,14 +351,16 @@ def _audio(raw: dict) -> AudioSettings:
         sample_rate=int(_as_float(raw.get("sample_rate"), 16000)),
         max_record_seconds=_as_float(raw.get("max_record_seconds"), 30.0),
         min_record_seconds=_as_float(raw.get("min_record_seconds"), 0.25),
+        input_match=_as_str(raw.get("input_match"), "PowerConf"),
+        output_match=_as_str(raw.get("output_match"), "PowerConf"),
         device=_as_str(raw.get("device")),
     )
 
 
 def _ui(raw: dict) -> UiSettings:
     return UiSettings(
-        width=int(_as_float(raw.get("width"), 800)),
-        height=int(_as_float(raw.get("height"), 480)),
+        width=int(_as_float(raw.get("width"), 1280)),
+        height=int(_as_float(raw.get("height"), 720)),
         fullscreen=_as_bool(raw.get("fullscreen"), False),
         driver=_as_str(raw.get("driver"), "auto") or "auto",
     )
